@@ -249,5 +249,3 @@ This Agreement shall be governed by the laws of the State of Wisconsin, without 
 **Acknowledgments:** Altura gratefully acknowledges foundational contributions from the University of Michigan, Michigan Technological University, the Free Software Foundation, and the U.S. Department of Defense / U.S. Space Force. We thank the open-source community whose freely shared work made this project possible.
 
 ---
-
-*End of Altura Rally Computer License Agreement — v1.0*
