@@ -1,5 +1,71 @@
 // ============================================================
-// altura_rally_neogps.ino — Altura Rally Computer  v1.0.23-NeoGPS
+// altura_rally_neogps.ino — Altura Rally Computer  v1.0.25-NeoGPS
+//
+// v1.0.25-NeoGPS
+//   BUG FIX — HDOP LED stuck grey on boot.
+//     Root cause: hdopBlinkPeriod initialises to 0. The no-fix branch
+//     (h >= 99.0) also assigned reqPeriod = 0, so reqPeriod != hdopBlinkPeriod
+//     was false on the very first ui_update() tick. The hide-ledHdop /
+//     show-spinnerHdop block never fired; ledHdop remained visible at its
+//     boot colour 0x888899.
+//     Fix: no-fix sentinel changed from 0 to 0xFFFFFFFEu — distinct from
+//     boot value (0), green-steady (0xFFFFFFFFu), amber (800), and red (250).
+//     hdopBlinkPeriod inside the no-fix branch updated to match.
+//     The GPS LED block does not share this bug — it is gated by uiCacheSigSat
+//     (initialised -1) rather than a period sentinel.
+//     Revert: restore reqPeriod = 0 and hdopBlinkPeriod = 0 in the no-fix branch.
+//
+// v1.0.24-NeoGPS
+//   LED indicator overhaul for scr_main: no-fix states replaced with animated
+//   red spinners; acquiring/NA states recoloured for clearer signal hierarchy.
+//
+//   CHANGE 1 — File-scope declarations.
+//     spinnerGps (lv_obj_t*) added alongside ledGps — shown only in no-fix state.
+//     spinnerHdop (lv_obj_t*) added alongside ledHdop — shown only in h >= 99.0 state.
+//     satsBlinkCol (uint32_t) added to carry the semantic colour for sats_blink_cb,
+//     mirroring the existing hdopBlinkCol pattern (required because sat < 3 now
+//     also blinks, sharing sats_blink_cb with the 2D-amber state).
+//     Revert: remove spinnerGps, spinnerHdop, satsBlinkCol declarations.
+//
+//   CHANGE 2 — buildMainUI(): spinnerGps created at same pos/size as ledGps (38,9 14×14).
+//     spinnerHdop created at same pos/size as ledHdop (281,45 14×14).
+//     Both hidden at boot (LV_OBJ_FLAG_HIDDEN). Arc colour 0xCC2200, bg arc transparent,
+//     arc width 3, anim 1000 ms / 60 deg sweep.
+//     lv_conf.h: LV_USE_SPINNER must be 1.
+//     Revert: remove spinnerGps and spinnerHdop creation blocks.
+//
+//   CHANGE 3 — sats_blink_cb(): on-tick colour now reads satsBlinkCol instead of
+//     hardcoded 0xCC8800, enabling the NA-red blink to share the same callback.
+//     Revert: restore hardcoded lv_color_hex(0xCC8800) on-tick.
+//
+//   CHANGE 4 — gps_blink_cb(): acquiring blink period 500 ms → 800 ms;
+//     on-tick colour 0x228B22 (green) → 0xCC8800 (amber).
+//     Revert: restore 0x228B22 on-tick; restore 500 ms period in ui_update().
+//
+//   CHANGE 5 — ui_update() GPS fix LED block.
+//     No-fix branch: hide ledGps, show spinnerGps (replaces grey LED).
+//     Acquiring branch: show ledGps, hide spinnerGps; colour 0x228B22 → 0xCC8800;
+//       timer period 500 → 800; gpsBlinkPeriod sentinel 500u → 800u.
+//     Locked branch: show ledGps, hide spinnerGps (no colour change — still green).
+//     Revert: remove lv_obj_add/clear_flag HIDDEN calls; restore 0x228B22 and 500u.
+//
+//   CHANGE 6 — ui_update() SATS LED block.
+//     NA branch (sat < 3): colour 0x888899 → 0xCC2200; reqSatsPeriod 0 → 250u;
+//       satsBlinkCol set to 0xCC2200 before starting timer.
+//     2D branch (sat == 3): satsBlinkCol set to 0xCC8800 before starting timer.
+//     Revert: restore 0x888899 colour and reqSatsPeriod = 0 for sat < 3;
+//       remove satsBlinkCol assignments; restore hardcoded 0xCC8800 in sats_blink_cb.
+//
+//   CHANGE 7 — ui_update() HDOP LED block.
+//     No-fix branch (h >= 99.0): hide ledHdop, show spinnerHdop (replaces grey LED).
+//     All other branches (green/amber/red): show ledHdop, hide spinnerHdop.
+//     Revert: remove lv_obj_add/clear_flag HIDDEN calls on ledHdop/spinnerHdop.
+//
+//   LED behaviour summary (v1.0.24):
+//     GPS:  red spinner — no fix; amber blink 800 ms — acquiring; green steady — locked.
+//     SATS: red blink 250 ms — < 3 sats; amber blink 800 ms — 2D; green steady — 3D.
+//     HDOP: red spinner — h >= 99.0; green steady — h <= 2.5; amber blink 800 ms —
+//           2.5 < h <= 3.5; red blink 250 ms — h > 3.5.
 //
 // v1.0.23-NeoGPS — POST-AUDIT BUG FIXES (no version increment)
 //
@@ -611,7 +677,7 @@
 #define TOUCH_MISO  39
 #define TOUCH_CLK   25
 
-#define FIRMWARE_VERSION "v1.0.23-NeoGPS"
+#define FIRMWARE_VERSION "v1.0.25-NeoGPS"
 
 #define WDT_TIMEOUT_S    5
 #define METERS_TO_FEET   3.28084f     /* meters to feet — altitude display */
@@ -973,7 +1039,7 @@ static bool         frzBlinkState = false; /* false = theme colour, true = red *
 // GPS fix LED blink state (v1.0.11-NeoGPS CHANGE 1).
 // Non-null only while GPS is in the acquiring state (sat >= GPS_MIN_SATS, h > GPS_MAX_HDOP).
 // Blinks ledGps green at 500 ms. Deleted on fix lock or fix loss.
-// gpsBlinkPeriod: 0 = no timer (no-fix or locked). 500 = acquiring.
+// gpsBlinkPeriod: 0 = no timer (locked). 800 = acquiring.
 static lv_timer_t * gpsBlinkTimer  = nullptr;
 static bool         gpsBlinkState  = false;  /* false = on (green), true = off (muted) */
 static uint32_t     gpsBlinkPeriod = 0;      /* period of running timer; 0 = none */
@@ -981,15 +1047,18 @@ static uint32_t     gpsBlinkPeriod = 0;      /* period of running timer; 0 = non
 // SATS LED blink state (v1.0.11-NeoGPS CHANGE 2).
 // Non-null only while sat == 3 (2D fix, amber 800 ms blink).
 // satsBlinkPeriod: 0 = no timer (NA or 3D). 800 = 2D.
+// satsBlinkCol: semantic colour for current band on-tick (v1.0.24-NeoGPS CHANGE 1).
+// Mirrors hdopBlinkCol pattern — required because sat < 3 now also blinks (red 250 ms).
 static lv_timer_t * satsBlinkTimer  = nullptr;
-static bool         satsBlinkState  = false;  /* false = on (amber), true = off (muted) */
+static bool         satsBlinkState  = false;  /* false = on (semantic colour), true = off (muted) */
 static uint32_t     satsBlinkPeriod = 0;      /* period of running timer; 0 = none */
+static uint32_t     satsBlinkCol    = 0xCC8800; /* semantic colour for current band on-tick (v1.0.24-NeoGPS CHANGE 1) */
 
 // HDOP LED blink state (v1.0.11-NeoGPS CHANGE 3).
 // Replaces prior hdopBlinkTimer/hdopBlinkCol/hdopBlinkPeriod/hdopBlinkState
 // which drove text-colour toggling on lblHdop.
 // Now drives lv_led_on/off toggling on ledHdop.
-// hdopBlinkPeriod: 0 = no timer (green / no-fix). 800 = amber. 250 = red.
+// hdopBlinkPeriod: 0 = boot default. 0xFFFFFFFEu = no-fix (spinner). 0xFFFFFFFFu = green steady. 800 = amber. 250 = red.
 static lv_timer_t * hdopBlinkTimer  = nullptr;
 static bool         hdopBlinkState  = false;  /* false = on (semantic colour), true = off (led dim) */
 static uint32_t     hdopBlinkPeriod = 0;      /* period of running timer; 0 = none */
@@ -1038,10 +1107,12 @@ static lv_obj_t *lblIntHdr;
    lblSignal and lblHdop removed; replaced with lv_led widgets + static text labels. */
 static lv_obj_t *lblGpsStatic;  /* static "GPS:"  text beside ledGps  */
 static lv_obj_t *ledGps;        /* lv_led — GPS fix state              */
+static lv_obj_t *spinnerGps;    /* lv_spinner — shown only in no-fix state (v1.0.24-NeoGPS CHANGE 1) */
 static lv_obj_t *lblSatsStatic; /* static "SATS:" text beside ledSats */
 static lv_obj_t *ledSats;       /* lv_led — satellite count / fix type */
 static lv_obj_t *lblHdopStatic; /* static "HDOP:" text beside ledHdop */
 static lv_obj_t *ledHdop;       /* lv_led — HDOP band                  */
+static lv_obj_t *spinnerHdop;   /* lv_spinner — shown only when h >= 99.0 (v1.0.24-NeoGPS CHANGE 1) */
 static lv_obj_t *lblClock;
 static lv_obj_t *divMain;
 static lv_obj_t *btnFrz;
@@ -1546,8 +1617,9 @@ static void stopFrzBlink() {
     lv_obj_clear_state(btnFrz, LV_STATE_CHECKED);   /* v1.0.19-NeoGPS CHANGE 1 */
 }
 
-// GPS fix LED blink callback — fires every 500 ms while GPS is acquiring.
-// Toggles ledGps between green and muted grey. lv_led_off never called. (v1.0.15)
+// GPS fix LED blink callback — fires every 800 ms while GPS is acquiring.
+// Toggles ledGps between amber and muted grey. lv_led_off never called. (v1.0.15)
+// Period changed 500 → 800 ms; colour changed green → amber. (v1.0.24-NeoGPS CHANGE 4)
 static void gps_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 1 */
     gpsBlinkState = !gpsBlinkState;
     if (gpsBlinkState) {
@@ -1555,7 +1627,7 @@ static void gps_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 1 */
         lv_led_set_color(ledGps, lv_color_hex(0x888899));
     } else {
         lv_led_on(ledGps);
-        lv_led_set_color(ledGps, lv_color_hex(0x228B22));
+        lv_led_set_color(ledGps, lv_color_hex(0xCC8800));
     }
 }
 
@@ -1570,8 +1642,10 @@ static void stopGpsBlink() {  /* v1.0.11-NeoGPS CHANGE 1 */
     gpsBlinkPeriod = 0;
 }
 
-// SATS LED blink callback — fires every 800 ms while sat count == 3 (2D fix).
-// Toggles ledSats between amber and muted grey. lv_led_off never called. (v1.0.15)
+// SATS LED blink callback — fires at satsBlinkPeriod ms.
+// Toggles ledSats between satsBlinkCol and muted grey. lv_led_off never called. (v1.0.15)
+// satsBlinkCol set by ui_update() before starting timer; supports both NA-red (v1.0.24)
+// and 2D-amber bands from the same callback. (v1.0.24-NeoGPS CHANGE 3)
 static void sats_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 2 */
     satsBlinkState = !satsBlinkState;
     if (satsBlinkState) {
@@ -1579,7 +1653,7 @@ static void sats_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 2 */
         lv_led_set_color(ledSats, lv_color_hex(0x888899));
     } else {
         lv_led_on(ledSats);
-        lv_led_set_color(ledSats, lv_color_hex(0xCC8800));
+        lv_led_set_color(ledSats, lv_color_hex(satsBlinkCol));
     }
 }
 
@@ -1936,6 +2010,22 @@ void buildMainUI() {
     lv_led_on(ledGps);                                           /* always on; color encodes state */
     lv_led_set_color(ledGps, lv_color_hex(0x888899));           /* boot: muted grey (no fix) */
 
+    /* v1.0.24-NeoGPS CHANGE 2 — GPS no-fix spinner.
+       Same position and size as ledGps (38,9 14×14). Hidden at boot; shown by
+       ui_update() in the no-fix branch while ledGps is hidden.
+       lv_conf.h: LV_USE_SPINNER must be 1. */
+    spinnerGps = lv_spinner_create(scr_main);
+    lv_obj_set_size(spinnerGps, 14, 14);
+    lv_obj_set_pos(spinnerGps, 38, 9);
+    lv_spinner_set_anim_params(spinnerGps, 1000, 60);
+    lv_obj_set_style_arc_color(spinnerGps, lv_color_hex(0xCC2200), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinnerGps, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(spinnerGps, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinnerGps, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(spinnerGps, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spinnerGps, 0, 0);
+    lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);             /* hidden until no-fix state */
+
     /* v1.0.11-NeoGPS CHANGE 2 — SATS fix-type lv_led + static label.
        Replaces lblSignal SATS line. "SATS:" at (6,26); ledSats 14×14 at (44,27).
        Initial state: muted NA colour, led off. */
@@ -2126,6 +2216,22 @@ void buildMainUI() {
     lv_obj_set_style_radius(ledHdop, LV_RADIUS_CIRCLE, 0);       /* v1.0.13: fix square default */
     lv_led_on(ledHdop);                                           /* always on; color encodes state */
     lv_led_set_color(ledHdop, lv_color_hex(0x888899));           /* boot: muted grey (no fix) */
+
+    /* v1.0.24-NeoGPS CHANGE 2 — HDOP no-fix spinner.
+       Same position and size as ledHdop (281,45 14×14). Hidden at boot; shown by
+       ui_update() when h >= 99.0 while ledHdop is hidden.
+       lv_conf.h: LV_USE_SPINNER must be 1. */
+    spinnerHdop = lv_spinner_create(scr_main);
+    lv_obj_set_size(spinnerHdop, 14, 14);
+    lv_obj_set_pos(spinnerHdop, 281, 45);
+    lv_spinner_set_anim_params(spinnerHdop, 1000, 60);
+    lv_obj_set_style_arc_color(spinnerHdop, lv_color_hex(0xCC2200), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinnerHdop, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(spinnerHdop, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinnerHdop, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(spinnerHdop, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spinnerHdop, 0, 0);
+    lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);             /* hidden until no-fix state */
 }
 
 // --- Menu screen ---
@@ -2866,9 +2972,10 @@ void ui_update(lv_timer_t * t) {
 
     /* ── GPS fix LED (v1.0.11-NeoGPS CHANGE 1) ──────────────────────────
        Three states driven by sat count and HDOP:
-         No fix    (sat < GPS_MIN_SATS):                     muted, off, no blink.
-         Acquiring (sat >= GPS_MIN_SATS, h > GPS_MAX_HDOP):  green, blink 500 ms.
-         Locked    (sat >= GPS_MIN_SATS, h <= GPS_MAX_HDOP): green, steady on.
+         No fix    (sat < GPS_MIN_SATS):                     red spinner, ledGps hidden.
+         Acquiring (sat >= GPS_MIN_SATS, h > GPS_MAX_HDOP):  amber blink 800 ms, spinner hidden.
+         Locked    (sat >= GPS_MIN_SATS, h <= GPS_MAX_HDOP): green steady, spinner hidden.
+       v1.0.24-NeoGPS CHANGE 5: no-fix → red spinner; acquiring → amber 800 ms.
        Cache: uiCacheSigSat + uiCacheSigTxt gate LED updates identically to
        the former signal label update.                                       */
     {
@@ -2882,22 +2989,26 @@ void ui_update(lv_timer_t * t) {
             strncmp(sigText, uiCacheSigTxt, sizeof(uiCacheSigTxt)) != 0) {
 
             if (sat < GPS_MIN_SATS) {
-                /* No fix — stop blink, muted grey. lv_led_off never used. */
+                /* No fix — stop blink, hide LED, show spinner. */
                 stopGpsBlink();
-                lv_led_on(ledGps);
-                lv_led_set_color(ledGps, lv_color_hex(0x888899));
+                lv_obj_add_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
             } else if (h > (double)GPS_MAX_HDOP) {
-                /* Acquiring — green blink 500 ms. */
+                /* Acquiring — amber blink 800 ms, hide spinner. */
+                lv_obj_clear_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
                 lv_led_on(ledGps);
-                lv_led_set_color(ledGps, lv_color_hex(0x228B22));
-                if (gpsBlinkPeriod != 500u) {
+                lv_led_set_color(ledGps, lv_color_hex(0xCC8800));
+                if (gpsBlinkPeriod != 800u) {
                     stopGpsBlink();
-                    gpsBlinkTimer  = lv_timer_create(gps_blink_cb, 500, NULL);
-                    gpsBlinkPeriod = 500u;
+                    gpsBlinkTimer  = lv_timer_create(gps_blink_cb, 800, NULL);
+                    gpsBlinkPeriod = 800u;
                 }
             } else {
-                /* Locked — stop blink, steady green. */
+                /* Locked — stop blink, steady green, hide spinner. */
                 stopGpsBlink();
+                lv_obj_clear_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
                 lv_led_on(ledGps);
                 lv_led_set_color(ledGps, lv_color_hex(0x228B22));
             }
@@ -2908,13 +3019,13 @@ void ui_update(lv_timer_t * t) {
 
     /* ── SATS fix-type LED (v1.0.11-NeoGPS CHANGE 2) ────────────────────
        Three states driven by sat count:
-         NA  (sat < 3):  muted 0x1A1A33, off, no blink.
-         2D  (sat == 3): amber 0xCC8800, on, blink 800 ms.
-         3D  (sat >= 4): green 0x228B22, on, steady.                        */
+         NA  (sat < 3):  red   0xCC2200, blink 250 ms. (v1.0.24-NeoGPS CHANGE 6)
+         2D  (sat == 3): amber 0xCC8800, blink 800 ms.
+         3D  (sat >= 4): green 0x228B22, steady.                              */
     {
         uint32_t reqSatsPeriod;
         if (sat < 3) {
-            reqSatsPeriod = 0;
+            reqSatsPeriod = 250u;
         } else if (sat == 3) {
             reqSatsPeriod = 800u;
         } else {
@@ -2924,12 +3035,15 @@ void ui_update(lv_timer_t * t) {
         if (reqSatsPeriod != satsBlinkPeriod) {
             stopSatsBlink();
             if (sat < 3) {
-                /* NA — muted grey. lv_led_off never used. */
+                /* NA — red blink 250 ms. (v1.0.24-NeoGPS CHANGE 6) */
+                satsBlinkCol    = 0xCC2200;
                 lv_led_on(ledSats);
-                lv_led_set_color(ledSats, lv_color_hex(0x888899));
-                satsBlinkPeriod = 0;
+                lv_led_set_color(ledSats, lv_color_hex(0xCC2200));
+                satsBlinkTimer  = lv_timer_create(sats_blink_cb, 250, NULL);
+                satsBlinkPeriod = 250u;
             } else if (sat == 3) {
                 /* 2D — amber blink 800 ms. */
+                satsBlinkCol    = 0xCC8800;
                 lv_led_on(ledSats);
                 lv_led_set_color(ledSats, lv_color_hex(0xCC8800));
                 satsBlinkTimer  = lv_timer_create(sats_blink_cb, 800, NULL);
@@ -2945,7 +3059,7 @@ void ui_update(lv_timer_t * t) {
 
     /* ── HDOP LED (v1.0.11-NeoGPS CHANGE 3) ────────────────────────────
        Replaces lblHdop text-blink block. Three active bands plus no-fix:
-         No fix  (h >= 99.0):             muted 0x1A1A33, off,  no blink.
+         No fix  (h >= 99.0):             red spinner, ledHdop hidden. (v1.0.24-NeoGPS CHANGE 7)
          Green   (h <= GPS_MAX_HDOP):     green 0x228B22, on,   steady.
          Amber   (h <= GPS_MAX_HDOP_ODO): amber 0xCC8800, on,   blink 800 ms.
          Red     (h >  GPS_MAX_HDOP_ODO): red   0xCC2200, on,   blink 250 ms.
@@ -2958,8 +3072,10 @@ void ui_update(lv_timer_t * t) {
         uint32_t reqCol;
 
         if (h >= 99.0) {
-            reqPeriod = 0;
-            reqCol    = 0x888899;
+            reqPeriod = 0xFFFFFFFEu;  /* sentinel: no-fix spinner. Distinct from boot (0),
+                                         green (0xFFFFFFFFu), amber (800), red (250) so the
+                                         gate fires on first tick. (v1.0.25-NeoGPS BUG FIX) */
+            reqCol    = 0xCC2200;  /* colour unused in no-fix — spinner shown instead */
         } else if (h <= (double)GPS_MAX_HDOP) {
             reqPeriod = 0xFFFFFFFFu;  /* sentinel: green steady */
             reqCol    = 0x228B22;
@@ -2975,17 +3091,21 @@ void ui_update(lv_timer_t * t) {
             stopHdopBlink();
             hdopBlinkCol = reqCol;
             if (h >= 99.0) {
-                /* No fix — muted grey. lv_led_off never used. */
-                lv_led_on(ledHdop);
-                lv_led_set_color(ledHdop, lv_color_hex(0x888899));
-                hdopBlinkPeriod = 0;
+                /* No fix — hide LED, show spinner. (v1.0.24-NeoGPS CHANGE 7) */
+                lv_obj_add_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
+                hdopBlinkPeriod = 0xFFFFFFFEu;  /* match reqPeriod sentinel (v1.0.25-NeoGPS BUG FIX) */
             } else if (reqPeriod == 0xFFFFFFFFu) {
-                /* Green band — steady on. */
+                /* Green band — show LED, hide spinner, steady on. */
+                lv_obj_clear_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
                 lv_led_on(ledHdop);
                 lv_led_set_color(ledHdop, lv_color_hex(reqCol));
                 hdopBlinkPeriod = 0xFFFFFFFFu;
             } else {
-                /* Amber or red — show colour immediately then start blink timer. */
+                /* Amber or red — show LED, hide spinner, show colour then start blink. */
+                lv_obj_clear_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
                 lv_led_on(ledHdop);
                 lv_led_set_color(ledHdop, lv_color_hex(reqCol));
                 hdopBlinkTimer  = lv_timer_create(hdop_blink_cb, reqPeriod, NULL);
