@@ -795,6 +795,13 @@
 #define GPS_MAX_HDOP_ODO     3.5f   /* amber band upper bound — HDOP LED (v1.0.11-NeoGPS CHANGE 3).
                                        Green: h <= GPS_MAX_HDOP (2.5). Amber: h <= GPS_MAX_HDOP_ODO (3.5).
                                        Red:   h >  GPS_MAX_HDOP_ODO. */
+#define GPS_HDOP_NO_FIX      99.0   /* sentinel value reported by NEO-6M when no fix is available.
+                                       The module outputs HDOP=99.9 in NMEA, which NeoGPS stores as
+                                       fix.hdop = 99000 (uint16 ×1000); rally.hdop is initialised to
+                                       99.9 at boot. The no-fix branch threshold is 99.0 — any value
+                                       at or above this indicates no valid HDOP measurement. Used by
+                                       ui_update() to select the red spinner state for ledHdop and
+                                       to compute hdopBand for the gpsTable row highlight. */
 // Speed gate — minimum speed to open accumulation (stationary noise rejection).
 // with the now-native miles pipeline.
 #define GPS_MIN_SPEED_MPH    1.864f  /* mph — accumulation gate (was GPS_MIN_SPEED_KMH 3.0 km/h) */
@@ -3193,7 +3200,7 @@ void ui_update(lv_timer_t * t) {
         uint32_t reqPeriod;
         uint32_t reqCol;
 
-        if (h >= 99.0) {
+        if (h >= GPS_HDOP_NO_FIX) {
             reqPeriod = 0xFFFFFFFEu;  /* sentinel: no-fix spinner. Distinct from boot (0),
                                          green (0xFFFFFFFFu), amber (800), red (250) so the
                                          gate fires on first tick. (v1.0.25-NeoGPS BUG FIX) */
@@ -3212,7 +3219,7 @@ void ui_update(lv_timer_t * t) {
         if (reqPeriod != hdopBlinkPeriod) {
             stopHdopBlink();
             hdopBlinkCol = reqCol;
-            if (h >= 99.0) {
+            if (h >= GPS_HDOP_NO_FIX) {
                 /* No fix — hide LED, show spinner. (v1.0.24-NeoGPS CHANGE 7) */
                 lv_obj_add_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_clear_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
@@ -3329,7 +3336,7 @@ void ui_update(lv_timer_t * t) {
            LLF intentionally not colour-coded — non-zero counts are expected
            in canopy-heavy stages and would produce constant false alarms.     */
         uint32_t hdopBand;
-        if      (h >= 99.0 || h <= (double)GPS_MAX_HDOP) hdopBand = 0;  /* no highlight */
+        if      (h >= GPS_HDOP_NO_FIX || h <= (double)GPS_MAX_HDOP) hdopBand = 0;  /* no highlight */
         else if (h <= (double)GPS_MAX_HDOP_ODO)          hdopBand = 1;  /* amber */
         else                                               hdopBand = 2;  /* red */
 
