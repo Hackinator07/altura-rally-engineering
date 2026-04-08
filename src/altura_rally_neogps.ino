@@ -1,5 +1,51 @@
 // ============================================================
-// altura_rally_neogps.ino — Altura Rally Computer  v1.0.28-NeoGPS
+// altura_rally_neogps.ino — Altura Rally Computer  v1.0.29-NeoGPS
+//
+// v1.0.29-NeoGPS
+//   BUG FIX 1 — lastTick = 0 at file scope caused spurious LVGL tick
+//     injection on first loop() frame.
+//     Root cause: setup() takes ~1.5–2 s (GPS baud handshake, delay()
+//     calls, LVGL init, screen builds). On the first loop() call,
+//     lv_tick_inc(millis() - 0) injected the full boot duration in one
+//     step, firing every LVGL timer immediately. If boot exceeded
+//     SPLASH_DURATION_MS (3500 ms) the splash timer would also fire on
+//     the first frame, skipping splash display entirely.
+//     Fix: lastTick = millis() added at the end of setup(), after
+//     lv_refr_now(), anchoring the tick baseline to boot-completion.
+//     Revert: remove lastTick = millis() at end of setup().
+//
+//   BUG FIX 2 — confirm_freset_cb(): gpsHasFix not reset; avgSpeedStartMs
+//     never re-anchored after factory reset.
+//     Root cause: gpsHasFix remaining true caused gpsTask to skip the
+//     !gpsHasFix first-fix block on every subsequent valid fix. The
+//     avgSpeedStartMs re-arm guard (if (!rally.avgSpeedTimerStarted))
+//     lives inside that block — though avgSpeedTimerStarted was correctly
+//     reset to false, the block was never entered, so avgSpeedStartMs
+//     retained the pre-reset timestamp. Elapsed time in the avg speed
+//     denominator was computed from the original first-fix epoch, making
+//     avg speed read artificially low for the rest of the session.
+//     Fix: gpsHasFix = false added inside the mutex block in
+//     confirm_freset_cb, after rally.avgSpeedTimerStarted = false.
+//     Revert: remove gpsHasFix = false line in confirm_freset_cb.
+//
+//   BUG FIX 3 — clearOdo_cb(): same gpsHasFix / avgSpeedStartMs
+//     re-anchor failure as BUG FIX 2.
+//     Root cause: identical mechanism — clearOdo_cb reset
+//     avgSpeedTimerStarted = false but left gpsHasFix = true, so the
+//     re-arm path inside !gpsHasFix was never reached. The code comment
+//     at line ~4558 ("CLR ODO clears the flag so it re-arms cleanly on
+//     the next valid fix") described the intended behaviour but the
+//     condition that gates it (gpsHasFix == false) was never satisfied.
+//     After CLR ODO mid-session, avg speed accumulated distance from zero
+//     but with elapsed time from the original first-fix epoch, reading
+//     artificially low for the remainder of the session.
+//     Fix: gpsHasFix = false added inside the mutex block in clearOdo_cb,
+//     after rally.avgSpeedTimerStarted = false. Unlike confirm_freset_cb,
+//     gpsLastLoc is intentionally NOT reset here — the GPS anchor is
+//     preserved to avoid a spurious accumulation pulse on the very next
+//     tick. gpsTask will enter the first-fix path, set gpsLastLoc to the
+//     current position, and re-arm avgSpeedStartMs cleanly.
+//     Revert: remove gpsHasFix = false line in clearOdo_cb.
 //
 // v1.0.28-NeoGPS
 //   speedCont on scr_main nudged down 4px to increase visual separation
@@ -1637,6 +1683,10 @@ void clearOdo_cb(lv_event_t * e) {
     rally.maxSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 — reset max speed with total odo */
     rally.avgSpeedStartMs      = 0;      /* v1.0.10-NeoGPS CHANGE 2 — re-arm timer on next first fix */
     rally.avgSpeedTimerStarted = false;  /* v1.0.10-NeoGPS CHANGE 2 */
+    gpsHasFix = false;  /* v1.0.29-NeoGPS BUG FIX 3 — reset first-fix flag so gpsTask re-enters
+                           the !gpsHasFix block on next valid fix, re-anchoring avgSpeedStartMs to
+                           the post-clear epoch. gpsLastLoc intentionally not cleared — anchor is
+                           preserved to avoid a spurious accumulation pulse on the very next tick. */
     xSemaphoreGive(dataMutex);
     prefs.putDouble("odo", 0.0);
 }
@@ -1873,6 +1923,9 @@ void confirm_freset_cb(lv_event_t * e) {
     rally.maxSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 */
     rally.avgSpeedStartMs      = 0;      /* v1.0.10-NeoGPS CHANGE 2 */
     rally.avgSpeedTimerStarted = false;  /* v1.0.10-NeoGPS CHANGE 2 */
+    gpsHasFix = false;  /* v1.0.29-NeoGPS BUG FIX 2 — reset first-fix flag so gpsTask re-enters
+                           the !gpsHasFix block on next valid fix, re-anchoring gpsLastLoc and
+                           avgSpeedStartMs from the post-reset epoch. */
     xSemaphoreGive(dataMutex);
 
     // Ensure freeze state and blink timer are cleared
@@ -5083,6 +5136,12 @@ void setup() {
     // as quickly as possible. dataMutex protects rally struct; ui_update
     // timer has not yet fired at this point so no LVGL race condition.
     lv_refr_now(NULL);
+
+    // v1.0.29-NeoGPS BUG FIX 1 — anchor lastTick to actual boot-completion
+    // time. Without this, lv_tick_inc(millis() - 0) on the first loop()
+    // call injects the full boot duration into LVGL's tick counter, firing
+    // all timers immediately on the first frame.
+    lastTick = millis();
 }
 
 // =====================
