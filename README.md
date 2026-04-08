@@ -143,14 +143,7 @@ The project can simulate in Wokwi (VS Code extension) using `wokwi-ili9341` in `
 
 ---
 
-## License
-
-Hardware designs and firmware are released for personal and educational use. All included fonts are SIL Open Font License.
-
-# Altura Rally Computer
-## License Agreement — v1.0
-
-**Authors:** Jason Hack · Eli Goethel
+## License Agreement
 
 ---
 
@@ -160,7 +153,7 @@ Hardware designs and firmware are released for personal and educational use. All
 
 ## 1. Purpose and Intended Use
 
-The Altura Rally Computer ("the Device") is a GNSS-based odometer and navigation interface developed specifically for motorsport and competition environments.
+The Altura Rally Computer ("the Device") is a GNSS-based odometer and navigation interface developed specifically for motorsport and competition environments. Hardware designs and firmware are released for personal and educational use. All included fonts are SIL Open Font License.
 
 - **Exclusive Use.** The Device is intended exclusively for organized racing, rallying, and off-road competition. It is not intended as a primary navigational aid on public roads.
 - **Regulatory Compliance.** It is the User's sole responsibility to ensure installation and use comply with all applicable local, state, federal, and event-sanctioning-body regulations.
