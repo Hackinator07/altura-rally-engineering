@@ -1,0 +1,11 @@
+[wokwi]
+version = 1
+firmware = ".pio/build/esp32dev/firmware.bin"
+elf = ".pio/build/esp32dev/firmware.elf"
+
+[[chip]]
+name = "gps"
+binary = "gps.chip.wasm"
+
+[[chip.nvs]]
+path = "nvs.bin"

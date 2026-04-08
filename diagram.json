@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "author": "Altura Rally Computer",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 100,
+      "left": -200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-ili9341",
+      "id": "tft",
+      "top": -60,
+      "left": 100,
+      "attrs": { "rotate": "90" }
+    },
+    {
+      "type": "chip-gps",
+      "id": "gps1",
+      "top": 300,
+      "left": 100,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    ["esp:GND.1",  "tft:GND",  "black",  ["h0"]],
+    ["esp:VIN",    "tft:VCC",  "red",    ["h0"]],
+    ["esp:D13",    "tft:MOSI", "blue",   ["h0"]],
+    ["esp:D14",    "tft:SCK",  "yellow", ["h0"]],
+    ["esp:D15",    "tft:CS",   "orange", ["h0"]],
+    ["esp:D2",     "tft:D/C",  "green",  ["h0"]],
+    ["esp:D12",    "tft:MISO", "cyan",   ["h0"]],
+    ["gps1:VCC",   "esp:3V3",  "red",    ["h0"]],
+    ["gps1:GND",   "esp:GND.2","black",  ["h0"]],
+    ["gps1:TX",    "esp:D22",  "green",  ["h0"]],
+    ["gps1:RX",    "esp:D27",  "blue",   ["h0"]],
+    ["$serialMonitor:TX", "esp:RX", "", []],
+    ["$serialMonitor:RX", "esp:TX", "", []]
+  ],
+  "serialMonitor": {
+    "display": "always"
+  }
+}
