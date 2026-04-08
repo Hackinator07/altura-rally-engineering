@@ -4,7 +4,7 @@
   <img width="400" alt="loonbrophoto" src="https://github.com/user-attachments/assets/4795f775-3684-4309-998c-90018051f487" />
 </p>
 
-ESP32-based rally navigation computer for competitive stage rally co-drivers. GPS-derived speed display and odometer accumulation on a 320×240 touchscreen. Built on the CYD (ESP32-2432S028R), NeoGPS, LVGL 9, FreeRTOS, and a u-blox NEO-6M with UBX binary configuration.
+A codriver first interface tool and rally navigation computer for competitive stage rally use. GPS-derived speed display and odometer accumulation on a 320×240 touchscreen. Built on the CYD (ESP32-2432S028R), NeoGPS, LVGL 9, FreeRTOS, and a u-blox NEO-6M with UBX binary configuration.
 
 **Authors:** Jason Hack, Ciprian Cristea, Eli Goethel
 
@@ -55,6 +55,7 @@ Scrollable table showing: latitude, longitude, altitude, HDOP, fix type, satelli
 
 ### Menu
 - **Brightness** — 4-step PWM backlight (25 / 50 / 75 / 100%)
+- **GPS Diagnostics** — live 9-row diagnostic table: Latitude, Longitude, Altitude (ft), HDOP, Fix Quality (EXCL / GOOD / POOR / NO FIX), Satellites in use, Rejected Steps, Rejected Sanity, and Last Location Failures (LLF).
 - **UTC Clock** — pending-value pattern; CONFIRM commits, BACK discards
 - **Theme picker** — 17 themes including Night Stage, Day Stage, Stealth, Cobalt, Ember, Racetrack, Enduro, and more
 - **Font picker** — 8 selectable numeric fonts: Montserrat, B612, DIN1451, DSEG14, DSEG7, LCD14, Segment7, Share Tech Mono
@@ -130,7 +131,7 @@ Custom font C files (`b612_*.c`, `din1451_*.c`, `dseg14_*.c`, etc.) live in `src
 
 ## Simulation
 
-The project simulates in Wokwi (VS Code extension) using `wokwi-ili9341` in `diagram.json`. NVS state persists between simulation runs unless explicitly cleared. There is no `wokwi-st7789` part — the `diagram.json` does not need updating for ST7789 hardware builds.
+The project can simulate in Wokwi (VS Code extension) using `wokwi-ili9341` in `diagram.json`. NVS state persists between simulation runs unless explicitly cleared. There is no `wokwi-st7789` part — the `diagram.json` does not need updating for ST7789 hardware builds.
 
 ---
 
