@@ -1,6 +1,8 @@
 # altura-rally-engineering
 
-<img width="800" height="600" alt="loonbrophoto" src="https://github.com/user-attachments/assets/4795f775-3684-4309-998c-90018051f487" />
+<p align="center">
+  <img width="400" alt="loonbrophoto" src="https://github.com/user-attachments/assets/4795f775-3684-4309-998c-90018051f487" />
+</p>
 
 ESP32-based rally navigation computer for competitive stage rally co-drivers. GPS-derived speed display and odometer accumulation on a 320×240 touchscreen. Built on the CYD (ESP32-2432S028R), NeoGPS, LVGL 9, FreeRTOS, and a u-blox NEO-6M with UBX binary configuration.
 
