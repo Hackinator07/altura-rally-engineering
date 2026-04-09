@@ -1,0 +1,5567 @@
+// ============================================================
+// altura_rally_neogps.ino — Altura Rally Computer  v1.0.41-NeoGPS
+//
+// v1.0.41-NeoGPS
+//   CHANGE 1 — lblSpeedUnit font montserrat_16 → montserrat_14.
+//     Reduces visual weight of the "mph"/"avg"/"max" unit label so it
+//     reads clearly as subordinate to the 48pt speed number without
+//     competing with it. 14pt is consistent with UI chrome (buttons,
+//     clock pill) throughout the rest of scr_main.
+//     Revert: restore &lv_font_montserrat_16 on lblSpeedUnit.
+//
+// v1.0.40-NeoGPS
+//   CHANGE 1 — scr_main odo zone: Option C vertical redistribution.
+//     Increases gap between speedCont bottom (y=92) and odo headers
+//     from 4px to 14px, creating visual separation between the speed
+//     zone and odometer zone for reduced cognitive load.
+//     lblOdoHdr / lblIntHdr: y=96 → 106.
+//     spanOdo / spanInt: y=118 → 128, h=66 → 56.
+//     Bottom edge of both spangroups unchanged at y=184.
+//     Revert: restore lblOdoHdr/lblIntHdr y=96; restore spanOdo/spanInt
+//       y=118, h=66.
+//
+// v1.0.39-NeoGPS
+//   BUG FIX 1 — Linker errors: undefined reference to Xxx_36 symbols.
+//     Root cause: v1.0.38 retained FONT_Xxx_36 alias macros inside the
+//     #ifdef LV_FONT_Xxx_40 branches, expanding to &b612_36 etc. The
+//     preprocessor emitted these symbol references into the translation
+//     unit even though no code path called the _36 macros at runtime.
+//     The linker then demanded the symbols, which no longer exist since
+//     the _36.c files were removed from src/.
+//     Fix: all FONT_Xxx_36 alias #define lines removed from every font
+//     block (both #ifdef and #else branches) for all 7 custom fonts.
+//     No runtime behaviour change — applyFont() uses only FONT_Xxx_40.
+//     Revert: restore FONT_Xxx_36 alias lines (or simply do not remove
+//     the _36.c files from src/ if aliases are desired).
+//
+// v1.0.38-NeoGPS
+//   CHANGE 1 — Custom font blocks updated: _36 → _40 throughout.
+//     #ifdef guards for fonts 1–4 (B612, DIN1451, DSEG14, DSEG7) changed
+//     from LV_FONT_Xxx_36 → LV_FONT_Xxx_40, matching the new lv_conf.h
+//     defines. extern declarations updated from Xxx_36 → Xxx_40. Fonts 5–7
+//     (LCD14, Segment7, ShareTechMono) unconditional extern updated likewise.
+//     FONT_Xxx_40 macros now point to the real 40pt symbols; FONT_Xxx_36
+//     aliases retained pointing to the 40pt symbol (no caller uses _36 at
+//     runtime; alias prevents orphan-macro warnings if any stale reference
+//     exists). lv_conf.h: LV_FONT_Xxx_36 defines replaced by LV_FONT_Xxx_40.
+//     src/: Xxx_36.c files replaced by Xxx_40.c files (generated locally via
+//     lv_font_conv --bpp 2 --size 40 ... identical opts otherwise).
+//     Revert: restore #ifdef LV_FONT_Xxx_36 guards; restore extern Xxx_36;
+//       restore FONT_Xxx_40 fallback comments; restore lv_conf.h _36 defines;
+//       restore _36.c files in src/.
+//
+// v1.0.37-NeoGPS
+//   BUG FIX 1 — lblClock text vertically high in pill container.
+//     Root cause: v1.0.34 CHANGE 2 applied lv_obj_set_style_pad_all(0)
+//     to remove LVGL's default internal padding for a clean pill shape.
+//     This also zeroed the top padding that provides vertical breathing
+//     room, causing the text to anchor to the top of the 22px container.
+//     Fix: pad_all(0) replaced with explicit pad_top(3), pad_bottom(0),
+//     pad_left(0), pad_right(0). The 3px top pad drops montserrat_14
+//     (~16px line height) to the optical centre of the 22px pill.
+//     Revert: restore lv_obj_set_style_pad_all(lblClock, 0, 0); remove
+//     the four explicit pad lines.
+//
+// v1.0.36-NeoGPS
+//   BUG FIX 1 — lblClock text not centred in pill container.
+//     Root cause: lv_label defaults to LV_LABEL_LONG_SCROLL_CIRCULAR in
+//     LVGL 9, which collapses the rendered width to the text content width.
+//     lv_obj_set_style_text_align CENTER then has nothing to centre against
+//     — the label effectively behaves as if width = text width.
+//     Fix: lv_label_set_long_mode(lblClock, LV_LABEL_LONG_CLIP) added
+//     immediately after lv_label_set_text in buildMainUI(). This locks
+//     the label to its declared 104px width and forces LVGL to render
+//     the text centred within the full pill.
+//     Revert: remove lv_label_set_long_mode(lblClock, LV_LABEL_LONG_CLIP).
+//
+// v1.0.35-NeoGPS
+//   CHANGE 1 — TOTAL/TRIP odometer readouts: 36pt → 40pt, "mi" unit removed.
+//     spanOdoUnit and spanIntUnit (the inline "mi" spans) removed from both
+//     spangroups. Each spangroup now contains only the number span.
+//     Number font bumped from f36 → f40 in applyFont(). All font #define blocks
+//     gain a FONT_Xxx_40 macro; custom fonts without a 40pt C file fall back to
+//     their _36 size (no regression — DSEG14/LCD14 already clipped at 36pt).
+//     Montserrat uses the LVGL built-in lv_font_montserrat_40.
+//     Header labels (TOTAL/TRIP) shifted up: y=110→96, h=22→20 to reclaim the
+//     space freed by divMain removal (v1.0.34 CHANGE 1).
+//     spanOdo/spanInt: y=134→118, h=50→66 (same bottom=184, same CLR clearance).
+//     applyTheme(): spanOdoUnit/spanIntUnit colour lines removed.
+//     applyFont(): f36 variable renamed f40; switch cases use FONT_Xxx_40.
+//     File-scope: spanOdoUnit and spanIntUnit declarations removed.
+//     Revert: restore spanOdoUnit/spanIntUnit declarations; restore their
+//       creation blocks in buildMainUI(); restore colour lines in applyTheme();
+//       rename f40→f36 and restore FONT_Xxx_36 in applyFont(); restore FONT_Xxx_40
+//       macros (or remove them — they are otherwise harmless); restore hdr y=110
+//       h=22, span y=134 h=50.
+//
+// v1.0.34-NeoGPS
+//   CHANGE 1 — divMain removed from scr_main.
+//     The horizontal divider between the speed zone and odometer zone
+//     was purely decorative — the TOTAL/TRIP headers provide sufficient
+//     visual separation. Removing it eliminates the only object that
+//     required a full-width 2px bg-coloured rect and its applyTheme()
+//     recolour call.
+//     Removed: static lv_obj_t *divMain declaration.
+//     Removed: 6-line divMain creation block in buildMainUI().
+//     Removed: lv_obj_set_style_bg_color(divMain, ...) in applyTheme().
+//     Revert: restore static lv_obj_t *divMain; restore creation block
+//       (lv_obj_create, set_size 320×2, set_pos 0 84, bg_color t.fg,
+//       border_width 0, pad_all 0); restore applyTheme() colour line.
+//
+//   CHANGE 2 — lblClock tinted pill container.
+//     Clock label on scr_main promoted from bare text to a pill-shaped
+//     container: bg_color = theme fg at LV_OPA_15, radius = 11.
+//     Height 16→22px; y=12→9 to vertically centre the taller pill in
+//     the 36px top-bar row (y=4+(36-22)/2=11; y=9 retained — optical).
+//     bg_color tracks applyTheme() — one new line per theme change.
+//     All other lblClock properties (font, text colour, align) unchanged.
+//     Revert: restore h=16, y=12; remove the five v1.0.34 style lines
+//       (bg_color, bg_opa, radius, border_width, pad_all) from buildMainUI();
+//       remove lv_obj_set_style_bg_color(lblClock, ...) from applyTheme().
+//
+// v1.0.33-NeoGPS
+//   BUG FIX 1 — splash_timer_cb(): scr_menu → scr_main (regression of v1.0.23 BUG FIX 1).
+//     Root cause: splash_timer_cb navigated to scr_menu instead of scr_main.
+//     Every cold boot landed on the SETTINGS menu, one extra tap from the odometer.
+//     Fix: change lv_screen_load_anim target from scr_menu to scr_main.
+//     Revert: restore scr_menu in splash_timer_cb.
+//
+//   BUG FIX 2 — clrOdoArc_timer_cb / clrIntArc_timer_cb: arc sweep wraps backward.
+//     Root cause: arc range was (0, 360). With start_angle=270 and end_angle advancing
+//     to 270+tick*9°, values past 360 were incorrectly wrapped by subtracting 360,
+//     causing the indicator to jump backward to near 0° at tick 11 (endAngle=369→9).
+//     Fix: lv_arc_set_range changed to (0, 630) in makeClrArc() so the widget
+//     accepts raw end angles up to 630° (= 270+360 full sweep). The broken
+//     conditional subtraction (endAngle > 360 ? endAngle - 360 : endAngle) removed
+//     from both timer callbacks; raw clamped endAngle passed directly.
+//     Same fix applied to press callbacks: start/end reset stays at 270 (valid in
+//     [0, 630] range). Release callbacks unchanged.
+//     Revert: restore lv_arc_set_range(arc, 0, 360) in makeClrArc(); restore the
+//       conditional wrap in both timer callbacks.
+//
+//   BUG FIX 3 — CLR button pressed-state colour stale after theme change.
+//     Root cause: applyTheme() updated btnClearOdo/Int base colour but did not
+//     re-init clrBtnPressedStyle or re-attach it. The LV_STATE_PRESSED style
+//     attached in makeClrBtn() retained the boot-time grey (0x8A8A8A) regardless
+//     of the active theme, making the pressed colour mismatch the button colour.
+//     Fix: initClrBtnStyle(t.btn, t.btn) called in applyTheme() after the base
+//     colour set, followed by remove+re-add of clrBtnPressedStyle on both buttons.
+//     Revert: remove the three new lines in applyTheme() CLR button block.
+//
+//   CHANGE 4 — NVS odometer bounds check comment corrected.
+//     Comment previously cited 800,000 miles as the upper bound; actual code uses
+//     999.0. Comment updated to match code. No logic change.
+//
+// v1.0.32-NeoGPS
+//   CHANGE 1 — CLR TOTAL / CLR TRIP hold-progress arc (Option B).
+//     Two lv_arc widgets (arcClearOdo, arcClearInt) are created as siblings
+//     of their respective buttons on scr_main, positioned 4px outside the
+//     button perimeter (x−4, y−4, w+8, h+8). Arc sweeps 270°→270°+360°
+//     (12 o'clock CW) over 2000 ms — matching lv_indev long_press_time.
+//     An lv_timer fires every 50 ms during press (40 ticks × 9° = 360°).
+//     Color: amber (0xCC8800) from 0–74%, red (0xCC2200) from 75–100%.
+//     Arc resets to 0° and hides on LV_EVENT_RELEASED / LV_EVENT_PRESS_LOST.
+//     The existing clrBtnPressedStyle BG transition is removed — the arc
+//     is the sole progress signal. Button BG remains flat during hold.
+//     lv_conf.h: LV_USE_ARC already 1 — no config changes required.
+//
+//     New file-scope declarations: arcClearOdo, arcClearInt (lv_obj_t*),
+//       clrOdoArcTimer, clrIntArcTimer (lv_timer_t*),
+//       clrOdoArcTick, clrIntArcTick (uint8_t tick counters).
+//     New functions: clrOdoArc_timer_cb, clrIntArc_timer_cb,
+//       clrOdoPress_cb, clrIntPress_cb, clrOdoRelease_cb, clrIntRelease_cb,
+//       makeClrArc (helper).
+//     Changed: initClrBtnStyle() — transition removed; pressed colour = btn
+//       colour (no darkening). makeClrBtn() — press/release event callbacks
+//       added alongside existing LONG_PRESSED / LONG_PRESSED_REPEAT.
+//     Changed: applyTheme() — clrBtnPressedStyle re-init removed; only
+//       base colour and style re-attach remain.
+//     Changed: buildMainUI() — makeClrArc() called for each CLR button
+//       after button creation.
+//
+//     Revert: remove arcClearOdo/arcClearInt/clrOdoArcTimer/clrIntArcTimer/
+//       clrOdoArcTick/clrIntArcTick declarations; remove clrOdoArc_timer_cb,
+//       clrIntArc_timer_cb, clrOdoPress_cb, clrIntPress_cb, clrOdoRelease_cb,
+//       clrIntRelease_cb, makeClrArc; restore initClrBtnStyle transition and
+//       darkened pressed colour; remove press/release event registrations from
+//       makeClrBtn; remove makeClrArc calls from buildMainUI; restore
+//       clrBtnPressedStyle re-init in applyTheme().
+//
+// v1.0.31-NeoGPS
+//   CHANGE 1 — FA symbol icons on scr_menu BRIGHT and FONT tiles.
+//     iconBright: LV_SYMBOL_CHARGE → FA_CIRCLE_HALF_SYMBOL (U+F042, fa_circle_half_36).
+//     iconFont:   LV_SYMBOL_LIST   → FA_FONT_SYMBOL        (U+F031, fa_font_36).
+//     extern lv_font_t and #define added after fa_clock_36 block.
+//     fa_circle_half_36.c and fa_font_36.c must be present in src/.
+//     Revert: remove the two new extern/define pairs; restore LV_SYMBOL_CHARGE +
+//       &lv_font_montserrat_36 on iconBright and LV_SYMBOL_LIST +
+//       &lv_font_montserrat_36 on iconFont in buildMenuUI().
+//
+// v1.0.30-NeoGPS
+//   CHANGE 1 — FA clock symbol on scr_menu CLOCK tile.
+//     iconClk was using LV_SYMBOL_EDIT (built-in LVGL pencil glyph).
+//     Replaced with FontAwesome clock outline (U+F017, FA classic regular)
+//     rendered via a dedicated single-glyph font fa_clock_36 (36pt, 2bpp).
+//     fa_clock_36.c must be present in src/ alongside other custom font files.
+//     extern lv_font_t fa_clock_36 and #define FA_CLOCK_SYMBOL added after
+//     the ShareTechMono font block.
+//     buildMenuUI(): iconClk text → FA_CLOCK_SYMBOL; font → &fa_clock_36.
+//     Revert: remove extern and #define; restore LV_SYMBOL_EDIT text and
+//       &lv_font_montserrat_36 font on iconClk in buildMenuUI().
+//
+//   CHANGE 2 — CLR button labels renamed.
+//     "CLR ODO" → "CLR TOTAL"; "CLR INT" → "CLR TRIP".
+//     Two lv_label_set_text call sites in buildMainUI() only.
+//     Revert: restore "CLR ODO" and "CLR INT" strings.
+//
+//   CHANGE 3 — CLR button label font bumped montserrat_14 → montserrat_18.
+//     Both CLR buttons are 150×50px. "CLR TOTAL" at montserrat_18 renders
+//     well within the 150px width; no clip risk.
+//     Two lv_obj_set_style_text_font call sites in buildMainUI() only.
+//     Revert: restore &lv_font_montserrat_14 on both CLR button labels.
+//
+// v1.0.29-NeoGPS
+//   BUG FIX 1 — lastTick = 0 at file scope caused spurious LVGL tick
+//     injection on first loop() frame.
+//     Root cause: setup() takes ~1.5–2 s (GPS baud handshake, delay()
+//     calls, LVGL init, screen builds). On the first loop() call,
+//     lv_tick_inc(millis() - 0) injected the full boot duration in one
+//     step, firing every LVGL timer immediately. If boot exceeded
+//     SPLASH_DURATION_MS (3500 ms) the splash timer would also fire on
+//     the first frame, skipping splash display entirely.
+//     Fix: lastTick = millis() added at the end of setup(), after
+//     lv_refr_now(), anchoring the tick baseline to boot-completion.
+//     Revert: remove lastTick = millis() at end of setup().
+//
+//   BUG FIX 2 — confirm_freset_cb(): gpsHasFix not reset; avgSpeedStartMs
+//     never re-anchored after factory reset.
+//     Root cause: gpsHasFix remaining true caused gpsTask to skip the
+//     !gpsHasFix first-fix block on every subsequent valid fix. The
+//     avgSpeedStartMs re-arm guard (if (!rally.avgSpeedTimerStarted))
+//     lives inside that block — though avgSpeedTimerStarted was correctly
+//     reset to false, the block was never entered, so avgSpeedStartMs
+//     retained the pre-reset timestamp. Elapsed time in the avg speed
+//     denominator was computed from the original first-fix epoch, making
+//     avg speed read artificially low for the rest of the session.
+//     Fix: gpsHasFix = false added inside the mutex block in
+//     confirm_freset_cb, after rally.avgSpeedTimerStarted = false.
+//     Revert: remove gpsHasFix = false line in confirm_freset_cb.
+//
+//   BUG FIX 3 — clearOdo_cb(): same gpsHasFix / avgSpeedStartMs
+//     re-anchor failure as BUG FIX 2.
+//     Root cause: identical mechanism — clearOdo_cb reset
+//     avgSpeedTimerStarted = false but left gpsHasFix = true, so the
+//     re-arm path inside !gpsHasFix was never reached. The code comment
+//     at line ~4558 ("CLR ODO clears the flag so it re-arms cleanly on
+//     the next valid fix") described the intended behaviour but the
+//     condition that gates it (gpsHasFix == false) was never satisfied.
+//     After CLR ODO mid-session, avg speed accumulated distance from zero
+//     but with elapsed time from the original first-fix epoch, reading
+//     artificially low for the remainder of the session.
+//     Fix: gpsHasFix = false added inside the mutex block in clearOdo_cb,
+//     after rally.avgSpeedTimerStarted = false. Unlike confirm_freset_cb,
+//     gpsLastLoc is intentionally NOT reset here — the GPS anchor is
+//     preserved to avoid a spurious accumulation pulse on the very next
+//     tick. gpsTask will enter the first-fix path, set gpsLastLoc to the
+//     current position, and re-arm avgSpeedStartMs cleanly.
+//     Revert: remove gpsHasFix = false line in clearOdo_cb.
+//
+// v1.0.28-NeoGPS
+//   speedCont on scr_main nudged down 4px to increase visual separation
+//   from lblClock above.
+//
+//   CHANGE 1 — buildMainUI(): speedCont y=24 → y=28.
+//     speedCont bottom: 88 → 92. lblSpeedUnit bottom (pad_bottom=8):
+//     80 → 84 — exactly kissing the divider top (y=84) with zero overlap.
+//     lblClock bottom edge is y=28; speedCont top is now y=28, giving a
+//     clean boundary between the two elements.
+//     Revert: restore lv_obj_set_pos(speedCont, 60, 24).
+//
+// v1.0.27-NeoGPS
+//   lblClock on scr_main bumped from montserrat_12 to montserrat_14.
+//   Font locked to montserrat regardless of selected display font.
+//   Height reduced 20 → 16px to tighten bottom edge (y=28) and minimise
+//   vertical overlap with speedCont (y=24).
+//
+//   CHANGE 1 — buildMainUI(): lblClock height 20→16; font montserrat_12→14.
+//     Comment updated: y=12 now centres the 16px label (4+(36-16)/2=14 optical
+//     centre; y=12 retained — label sits slightly high, clear of speedCont).
+//     Revert: restore h=20, &lv_font_montserrat_12.
+//
+//   CHANGE 2 — applyFont(): lblClock font override changed from f12 to
+//     &lv_font_montserrat_14 (hardcoded). lblClock is now immune to the
+//     selected display font — montserrat_14 always, across all font themes.
+//     Revert: restore lv_obj_set_style_text_font(lblClock, f12, 0).
+//
+// v1.0.26-NeoGPS
+//   scr_main layout — FRZ button repositioned to top bar; GPS/SAT
+//   indicators relocated beneath FRZ; lblClock recentred in gap;
+//   "SATS:" label shortened to "SAT:".
+//
+//   CHANGE 1 — buildMainUI(): btnFrz repositioned to top bar.
+//     Old: x=4, y=46, w=60, h=28. New: x=6, y=4, w=100, h=36.
+//     Now matches btnMenu dimensions (100×36) and sits flush with
+//     the top-bar row alongside lblClock and btnMenu.
+//     Revert: restore x=4, y=46, w=60, h=28.
+//
+//   CHANGE 2 — buildMainUI(): lblClock recentred in FRZ/MENU gap.
+//     Old: x=80, y=4, w=160. New: x=108, y=12, w=104.
+//     Gap between FRZ right edge (x=106) and MENU left edge (x=214)
+//     is 108px. Label width 104px with 2px margin each side centres
+//     "HH:MM:SS" (montserrat_12, ~75px) within the gap.
+//     y=12 vertically centres the 20px label within the 36px button row
+//     (4 + (36-20)/2 = 12). No clip risk confirmed: 104px > 75px render.
+//     Revert: restore x=80, y=4, w=160.
+//
+//   CHANGE 3 — buildMainUI(): GPS and SAT indicators shifted down
+//     to sit beneath the new FRZ button.
+//     lblGpsStatic: y=8 → y=44.
+//     ledGps / spinnerGps: y=9 → y=45.
+//     lblSatsStatic: y=26 → y=62. Text "SATS:" → "SAT:".
+//     ledSats: y=27 → y=63. x=44 → x=38 (aligns LED column with ledGps).
+//     HDOP group (lblHdopStatic/ledHdop/spinnerHdop) unchanged —
+//     positioned relative to MENU button, unaffected by this change.
+//     Revert: restore original y values, x=44 for ledSats, "SATS:" text.
+//
+// v1.0.25-NeoGPS
+//   BUG FIX — HDOP LED stuck grey on boot.
+//     Root cause: hdopBlinkPeriod initialises to 0. The no-fix branch
+//     (h >= 99.0) also assigned reqPeriod = 0, so reqPeriod != hdopBlinkPeriod
+//     was false on the very first ui_update() tick. The hide-ledHdop /
+//     show-spinnerHdop block never fired; ledHdop remained visible at its
+//     boot colour 0x888899.
+//     Fix: no-fix sentinel changed from 0 to 0xFFFFFFFEu — distinct from
+//     boot value (0), green-steady (0xFFFFFFFFu), amber (800), and red (250).
+//     hdopBlinkPeriod inside the no-fix branch updated to match.
+//     The GPS LED block does not share this bug — it is gated by uiCacheSigSat
+//     (initialised -1) rather than a period sentinel.
+//     Revert: restore reqPeriod = 0 and hdopBlinkPeriod = 0 in the no-fix branch.
+//
+// v1.0.24-NeoGPS
+//   LED indicator overhaul for scr_main: no-fix states replaced with animated
+//   red spinners; acquiring/NA states recoloured for clearer signal hierarchy.
+//
+//   CHANGE 1 — File-scope declarations.
+//     spinnerGps (lv_obj_t*) added alongside ledGps — shown only in no-fix state.
+//     spinnerHdop (lv_obj_t*) added alongside ledHdop — shown only in h >= 99.0 state.
+//     satsBlinkCol (uint32_t) added to carry the semantic colour for sats_blink_cb,
+//     mirroring the existing hdopBlinkCol pattern (required because sat < 3 now
+//     also blinks, sharing sats_blink_cb with the 2D-amber state).
+//     Revert: remove spinnerGps, spinnerHdop, satsBlinkCol declarations.
+//
+//   CHANGE 2 — buildMainUI(): spinnerGps created at same pos/size as ledGps (38,9 14×14).
+//     spinnerHdop created at same pos/size as ledHdop (281,45 14×14).
+//     Both hidden at boot (LV_OBJ_FLAG_HIDDEN). Arc colour 0xCC2200, bg arc transparent,
+//     arc width 3, anim 1000 ms / 60 deg sweep.
+//     lv_conf.h: LV_USE_SPINNER must be 1.
+//     Revert: remove spinnerGps and spinnerHdop creation blocks.
+//
+//   CHANGE 3 — sats_blink_cb(): on-tick colour now reads satsBlinkCol instead of
+//     hardcoded 0xCC8800, enabling the NA-red blink to share the same callback.
+//     Revert: restore hardcoded lv_color_hex(0xCC8800) on-tick.
+//
+//   CHANGE 4 — gps_blink_cb(): acquiring blink period 500 ms → 800 ms;
+//     on-tick colour 0x228B22 (green) → 0xCC8800 (amber).
+//     Revert: restore 0x228B22 on-tick; restore 500 ms period in ui_update().
+//
+//   CHANGE 5 — ui_update() GPS fix LED block.
+//     No-fix branch: hide ledGps, show spinnerGps (replaces grey LED).
+//     Acquiring branch: show ledGps, hide spinnerGps; colour 0x228B22 → 0xCC8800;
+//       timer period 500 → 800; gpsBlinkPeriod sentinel 500u → 800u.
+//     Locked branch: show ledGps, hide spinnerGps (no colour change — still green).
+//     Revert: remove lv_obj_add/clear_flag HIDDEN calls; restore 0x228B22 and 500u.
+//
+//   CHANGE 6 — ui_update() SATS LED block.
+//     NA branch (sat < 3): colour 0x888899 → 0xCC2200; reqSatsPeriod 0 → 250u;
+//       satsBlinkCol set to 0xCC2200 before starting timer.
+//     2D branch (sat == 3): satsBlinkCol set to 0xCC8800 before starting timer.
+//     Revert: restore 0x888899 colour and reqSatsPeriod = 0 for sat < 3;
+//       remove satsBlinkCol assignments; restore hardcoded 0xCC8800 in sats_blink_cb.
+//
+//   CHANGE 7 — ui_update() HDOP LED block.
+//     No-fix branch (h >= 99.0): hide ledHdop, show spinnerHdop (replaces grey LED).
+//     All other branches (green/amber/red): show ledHdop, hide spinnerHdop.
+//     Revert: remove lv_obj_add/clear_flag HIDDEN calls on ledHdop/spinnerHdop.
+//
+//   LED behaviour summary (v1.0.24):
+//     GPS:  red spinner — no fix; amber blink 800 ms — acquiring; green steady — locked.
+//     SATS: red blink 250 ms — < 3 sats; amber blink 800 ms — 2D; green steady — 3D.
+//     HDOP: red spinner — h >= 99.0; green steady — h <= 2.5; amber blink 800 ms —
+//           2.5 < h <= 3.5; red blink 250 ms — h > 3.5.
+//
+// v1.0.23-NeoGPS — POST-AUDIT BUG FIXES (no version increment)
+//
+//   BUG FIX 1 — splash_timer_cb(): scr_clock → scr_main.
+//     Root cause: splash_timer_cb navigated to scr_clock instead of
+//     scr_main. Comment at the call site correctly stated scr_main;
+//     the code was wrong. Every cold boot landed on the UTC clock
+//     screen, leaving the driver one extra tap from the odometer.
+//     Fix: change lv_screen_load_anim target from scr_clock to scr_main.
+//     Revert: restore scr_clock in splash_timer_cb.
+//
+//   BUG FIX 2 — setup(): UTC NVS restore bounds check widened -12 → -14.
+//     Root cause: restore guard was `utcOffset < -12` but utc_minus_cb
+//     permits pendingUtcOffset down to -14. Offsets of -13 and -14 could
+//     be set and saved via the UI, then silently reset to UTC_OFFSET_DEFAULT
+//     on the next power cycle. Fix: change lower bound from -12 to -14.
+//     Revert: restore `utcOffset < -12`.
+//
+//   BUG FIX 3 — back_clock_cb(): immediate lblUtcOffset correction.
+//     Root cause: back_clock_cb invalidated uiCacheUtcOff (0x7F) to force
+//     a future ui_update() write, but ui_update() guards the lblUtcOffset
+//     write with !onClockScreen. During the 150 ms slide-out animation
+//     scr_clock is still the active screen, so ui_update() would not fire
+//     the correction until after the transition completed — leaving the
+//     stale pending value briefly visible.
+//     Fix: write committed utcOffset directly to lblUtcOffset in
+//     back_clock_cb and set uiCacheUtcOff = utcOffset (no redundant write).
+//     Revert: restore uiCacheUtcOff = 0x7F; remove direct label write.
+//
+//   BUG FIX 4 — confirm_clock_cb(): lblClock forced refresh on commit.
+//     Root cause: confirm_clock_cb invalidated uiCacheUtcOff but not the
+//     time-string cache (uiCacheSecond / uiCacheTimeStr). After CONFIRM,
+//     utcOffset changed but lblClock on scr_main would not update until
+//     the next GPS second tick — up to 1 second of stale displayed time.
+//     Fix: add uiCacheSecond = 0xFF and uiCacheTimeStr[0] = '\0' in
+//     confirm_clock_cb to guarantee lblClock refresh on the next tick.
+//     Revert: remove the two cache invalidation lines.
+//
+//   BUG FIX 5 — applyTheme(): theme and font picker row labels recolored
+//     to t.fg.
+//     Root cause: theme name labels (child index 5 of each themeList row)
+//     and font preview labels (child index 0 of each fontList row) were
+//     hardcoded to 0x1A2A6C (deep navy) in buildThemeUI()/buildFontUI().
+//     applyTheme() recolored row backgrounds to t.bg but did not update
+//     the label text color. On dark themes (Night Stage, Stealth, Cobalt,
+//     Ember, etc.) navy text on a dark/black background is illegible.
+//     Fix: in the existing applyTheme() row-recolor loops, additionally
+//     set each row's name/preview label text color to t.fg via
+//     lv_obj_get_child(child, 5) for themeList and lv_obj_get_child(child,
+//     0) for fontList.
+//     Revert: remove the lv_obj_get_child / lv_obj_set_style_text_color
+//     lines added to both loops.
+//
+// v1.0.23-NeoGPS
+//   scr_clock UTC offset now uses a pending value pattern matching
+//   scr_theme and scr_font. ± buttons stage pendingUtcOffset; CONFIRM
+//   commits to utcOffset and writes NVS; BACK discards the pending value.
+//   The live clock on scr_main always reflects the last committed utcOffset.
+//
+//   CHANGE 1 — File-scope declaration.
+//     pendingUtcOffset (int8_t) added alongside utcOffset.
+//     btnClockConfirm (lv_obj_t*) added alongside btnClockBack.
+//     Revert: remove pendingUtcOffset and btnClockConfirm declarations.
+//
+//   CHANGE 2 — open_clock_cb().
+//     Seeds pendingUtcOffset = utcOffset on every open so the screen always
+//     opens showing the current committed value.
+//     Revert: remove the pendingUtcOffset seed line.
+//
+//   CHANGE 3 — utc_minus_cb() / utc_plus_cb().
+//     Now adjust pendingUtcOffset only (no utcOffset write, no NVS write).
+//     lblUtcOffset updated immediately from pendingUtcOffset; uiCacheUtcOff
+//     invalidated so ui_update() does not overwrite the pending display.
+//     Revert: restore utcOffset-- / utcOffset++ and prefs.putChar calls;
+//       remove pendingUtcOffset adjustments and lblUtcOffset direct writes.
+//
+//   CHANGE 4 — confirm_clock_cb().
+//     Commits pendingUtcOffset → utcOffset, writes NVS, invalidates
+//     uiCacheUtcOff so ui_update() refreshes lblClock on next tick,
+//     then navigates back to scr_menu via MOVE_RIGHT slide.
+//     Revert: restore direct lv_screen_load_anim; remove commit/NVS lines.
+//
+//   CHANGE 5 — back_clock_cb() added.
+//     Discards pendingUtcOffset (resets to utcOffset) and navigates back
+//     to scr_menu. btnClockBack now routes to back_clock_cb instead of
+//     back_to_menu_cb.
+//     Revert: remove back_clock_cb; restore btnClockBack → back_to_menu_cb.
+//
+//   CHANGE 6 — buildClockUI().
+//     btnClockConfirm added at (108, 4, 102×36).
+//     btnClockBack wired to back_clock_cb instead of back_to_menu_cb.
+//     Revert: remove btnClockConfirm block; restore back_to_menu_cb.
+//
+//   CHANGE 7 — applyTheme() clock section.
+//     btnClockConfirm normal and pressed-state colours added.
+//     Revert: remove the two lv_obj_set_style_bg_color lines for btnClockConfirm.
+//
+//   CHANGE 8 — confirm_freset_cb().
+//     pendingUtcOffset reset to UTC_OFFSET_DEFAULT alongside utcOffset.
+//     Revert: remove the pendingUtcOffset reset line.
+//
+// v1.0.22-NeoGPS
+//   GPS table horizontal scroll eliminated.
+//
+//   Root cause: lv_table_set_column_width() sets the cell *content* width.
+//   LVGL adds pad_left (8) + pad_right (4) = 12px overhead per column on top.
+//   Prior widths (110 + 198 = 308px content) rendered as (122 + 210 = 332px) —
+//   12px wider than the 320px container, triggering lv_table's default
+//   horizontal scroll.
+//
+//   CHANGE 1 — Column widths corrected to absorb cell padding.
+//     col-0: 110 → 100px content (+ 12px overhead = 112px rendered).
+//     col-1: 198 → 196px content (+ 12px overhead = 208px rendered).
+//     Total rendered: 320px — no horizontal overflow.
+//     Revert: restore col-0 110, col-1 198.
+//
+//   CHANGE 2 — lv_obj_set_scroll_dir(gpsTable, LV_DIR_VER) added.
+//     Explicitly restricts scroll to vertical only, preventing any future
+//     padding or theme change from re-introducing horizontal scroll.
+//     Revert: remove the lv_obj_set_scroll_dir call.
+//
+// v1.0.21-NeoGPS
+//   REJ STP and REJ SAN rows on scr_gps colour-coded via the existing
+//   gps_table_draw_cb draw event. user_data encoding extended from a 2-bit
+//   HDOP band to a 6-bit packed word carrying three independent band fields.
+//
+//   CHANGE 1 — user_data packing.
+//     GPS_UD_HDOP_SHIFT  = 0, GPS_UD_REJ_SHIFT = 2, GPS_UD_SAN_SHIFT = 4.
+//     GPS_UD_BAND_MASK   = 0x3u (2 bits per field).
+//     GPS_UD_PACK / GPS_UD_GET helper macros added above gps_table_draw_cb.
+//     Boot seed: lv_obj_set_user_data(gpsTable, 0) unchanged — all fields 0.
+//     Revert: restore 2-bit hdopBand-only encoding in ui_update() and
+//       GPS_ROW_HDOP-only check in gps_table_draw_cb; remove macros.
+//
+//   CHANGE 2 — gps_table_draw_cb extended.
+//     Switch on row: GPS_ROW_HDOP reads hdop_band from bits 0-1;
+//     GPS_ROW_REJSTP reads rej_band from bits 2-3;
+//     GPS_ROW_REJSAN reads san_band from bits 4-5.
+//     Band 1 (amber): 0xCC8800 LV_OPA_30.
+//     Band 2 (red):   0xCC2200 LV_OPA_40.
+//     Band 0 (none): early return, no fill override.
+//     Revert: restore GPS_ROW_HDOP-only check.
+//
+//   CHANGE 3 — ui_update() rejection counter band computation.
+//     After writing REJ STP / REJ SAN cell values, computes rej_band and
+//     san_band (0=0 rejections, 1=amber ≥1, 2=red ≥5) and packs all three
+//     bands into user_data via GPS_UD_PACK.
+//     Revert: restore hdopBand-only user_data write.
+//
+//   REJ thresholds: amber ≥ 1 (any rejection is noteworthy);
+//     red ≥ 5 (pattern of repeated corruption events).
+//     LLF intentionally not colour-coded — non-zero counts are expected
+//     in canopy-heavy stages and would produce false alarms.
+//
+// v1.0.20-NeoGPS
+//   GPS diagnostics screen (scr_gps) refactored from manual lv_label pairs
+//   to a single lv_table widget (gpsTable).
+//
+//   CHANGE 1 — File-scope declarations.
+//     Removed: lblGpsSats, lblGpsFix, lblGpsHdop, lblGpsAlt, lblGpsLat,
+//       lblGpsLon, lblGpsRejStp, lblGpsRejSan, lblGpsLlf (9× lv_obj_t*),
+//       gpsScrollList (lv_obj_t*), lblGpsHdr[9] (array).
+//     Added: gpsTable (lv_obj_t*), GPS_ROW_* constants (0-8), GPS_NUM_ROWS.
+//     Revert: restore 9 value-label pointers, gpsScrollList, lblGpsHdr[9];
+//       remove gpsTable and GPS_ROW_* constants.
+//
+//   CHANGE 2 — buildGpsUI().
+//     gpsScrollList flex-container + 9 row-containers + 18 lv_label children
+//     replaced with lv_table_create, column width config, cell value init,
+//     user_data HDOP band seed, and gps_table_draw_cb event registration.
+//     applyScrollbarStyle() attached to gpsTable directly.
+//     Revert: restore gpsScrollList and 9-row label loop; remove gpsTable block.
+//
+//   CHANGE 3 — applyTheme() GPS section.
+//     9 lblGpsHdr[] recolours + 9 value-label recolours + gpsScrollList bg
+//     replaced with LV_PART_MAIN bg and LV_PART_ITEMS text/bg colour calls
+//     on gpsTable, plus lv_obj_invalidate to re-trigger the draw callback.
+//     Revert: restore individual label recolour loop and gpsScrollList bg line.
+//
+//   CHANGE 4 — ui_update() GPS block.
+//     lv_label_set_text / lv_label_set_text_fmt calls replaced with
+//     lv_table_set_cell_value / lv_table_set_cell_value_fmt on gpsTable.
+//     HDOP band index (0-3) written to gpsTable user_data each active tick
+//     followed by lv_obj_invalidate to trigger the draw callback.
+//     Revert: restore lv_label_set_text calls; remove band/user_data/invalidate.
+//
+//   NEW — gps_table_draw_cb().
+//     LV_EVENT_DRAW_TASK_ADDED callback on gpsTable. Intercepts the HDOP row
+//     fill draw task and overrides colour based on band index in user_data:
+//       band 2 (amber): 0xCC8800 at LV_OPA_30
+//       band 3 (red):   0xCC2200 at LV_OPA_40
+//       bands 0/1:      no override (transparent / green = no highlight)
+//     Revert: remove gps_table_draw_cb function and event registration.
+//
+//   lv_conf.h: LV_USE_TABLE must be 1.
+//
+// v1.0.19-NeoGPS
+//   LVGL button pattern improvements across all screens.
+//
+//   CHANGE 1 — btnFrz: LV_OBJ_FLAG_CHECKABLE + LV_EVENT_VALUE_CHANGED.
+//     lv_obj_add_flag(btnFrz, LV_OBJ_FLAG_CHECKABLE) added in buildMainUI().
+//     Event registration changed from LV_EVENT_CLICKED to LV_EVENT_VALUE_CHANGED
+//     so LVGL tracks checked/unchecked state natively.
+//     freeze_cb logic unchanged; blink timer retained for animated-red behavior.
+//     Revert: remove LV_OBJ_FLAG_CHECKABLE line; restore LV_EVENT_CLICKED in
+//     makeBtn call for btnFrz.
+//
+//   CHANGE 2 — btnClearOdo / btnClearInt: press-transition replaces custom timer.
+//     Custom 200 ms repeating timers (clrOdoPress_timer_cb, clrIntPress_timer_cb),
+//     darkenStep(), stopClrOdoTimer(), stopClrIntTimer(), file-scope vars
+//     clrOdoTimer, clrIntTimer, clrOdoStep, clrIntStep, and the per-button
+//     LV_EVENT_PRESSED / LV_EVENT_RELEASED lambdas removed.
+//     Replaced with static lv_style_t clrBtnPressedStyle (file-scope, init-once)
+//     carrying a 1800 ms ease-in background-colour transition from the
+//     theme button colour to its 20%-darkened equivalent on LV_STATE_PRESSED.
+//     makeClrBtn() helper (replaces two makeBtn + lambda blocks) creates a CLR
+//     button with the transition style already attached.
+//     applyTheme() updated: clr btn pressed-state overrides removed; transition
+//     style is re-attached after colour update so the transition start colour
+//     tracks the active theme.
+//     Revert: restore clrOdoTimer, clrIntTimer, clrOdoStep, clrIntStep vars,
+//     darkenStep(), clrOdoPress_timer_cb(), clrIntPress_timer_cb(),
+//     stopClrOdoTimer(), stopClrIntTimer(), and the two LV_EVENT_PRESSED /
+//     LV_EVENT_RELEASED lambda event registrations; remove clrBtnPressedStyle
+//     and makeClrBtn().
+//     lv_conf.h: LV_USE_ANIMATION must be 1 (already required by LVGL core).
+//
+//   CHANGE 3 — speedCont: lv_obj_create → lv_btn_create with press feedback.
+//     speedCont promoted from transparent lv_obj_create to lv_btn_create so
+//     the tap target gives visible press feedback (translucent bg flash on
+//     LV_STATE_PRESSED). bg_opa LV_OPA_TRANSP in default state preserves the
+//     invisible look; LV_OPA_20 pressed state gives brief tactile confirmation.
+//     Click handler logic (speedViewIdx cycle) unchanged.
+//     applyTheme() gains pressed-state colour for speedCont (theme bg at OPA_20).
+//     Revert: restore lv_obj_create; remove pressed-state style and applyTheme
+//     speedCont block.
+//
+//   CHANGE 4 — btnFresetConfirm: static lv_style_t danger style.
+//     Two file-scope static styles (dangerBtnStyle, dangerBtnPressedStyle) replace
+//     the inline lv_obj_set_style_bg_color calls in buildFResetUI().
+//     applyTheme() override block for btnFresetConfirm removed (danger style
+//     attached once and never re-applied by theme).
+//     Revert: remove dangerBtnStyle/dangerBtnPressedStyle declarations and
+//     applyDangerStyle() call; restore two lv_obj_set_style_bg_color lines in
+//     buildFResetUI() and restore applyTheme() override block.
+//
+//   CHANGE 5 — btnUtcMinus / btnUtcPlus: LV_EVENT_LONG_PRESSED_REPEAT added.
+//     lv_obj_add_event_cb(btn, cb, LV_EVENT_LONG_PRESSED_REPEAT, NULL) added
+//     for both UTC buttons in buildClockUI(). Enables hold-to-repeat for fast
+//     UTC offset adjustment across the -14..+14 range.
+//     Revert: remove the two lv_obj_add_event_cb LONG_PRESSED_REPEAT lines.
+//
+//   AUDIT FINDING — buttonmatrix for font/theme picker rows NOT implemented.
+//     The proposed lv_buttonmatrix replacement for font picker rows is
+//     incompatible with the per-row custom font preview rendering (each row
+//     renders its font name in its own 24pt typeface). lv_buttonmatrix applies
+//     a single shared text style to all cells, making per-cell font assignment
+//     impossible. Theme picker rows retain individual lv_btn_create because
+//     the 5-colour swatch column cannot be hosted inside a buttonmatrix cell.
+//     Both pickers retain their existing individual-row architecture unchanged.
+//
+// v1.0.18-NeoGPS
+//   Compile fix for lv_span_t incomplete type errors.
+//   &span->style is not accessible in LVGL 9 because lv_span_t is
+//   forward-declared opaque in the public headers. The full struct
+//   definition lives in lv_span_private.h which is not included by
+//   lvgl.h. Fix: replace all &spanXxx->style with lv_span_get_style(spanXxx)
+//   which is the public API function returning lv_style_t* for a span.
+//   Applied to all 12 call sites in buildMainUI(), applyTheme(), applyFont().
+//   No logic changes.
+//
+// v1.0.17-NeoGPS
+//   TOTAL and TRIP readouts converted from separate lv_label pairs
+//   (lblOdoNum + lblOdoUnit, lblIntNum + lblIntUnit inside flex containers)
+//   to lv_spangroup widgets (spanOdo, spanInt), each containing two spans:
+//   a number span at the selected font 36pt and a unit span at
+//   montserrat_16 (fixed). Both spans share one inline text flow, eliminating
+//   alignment jitter when numeric values of different character widths update.
+//
+//   CHANGE 1 — File-scope declarations.
+//     lblOdoNum, lblOdoUnit, lblIntNum, lblIntUnit (lv_obj_t*) replaced by:
+//       spanOdo, spanInt           (lv_obj_t*  — lv_spangroup widgets)
+//       spanOdoNum, spanOdoUnit    (lv_span_t* — inline spans)
+//       spanIntNum, spanIntUnit    (lv_span_t* — inline spans)
+//     uiCacheOdo and uiCacheInt cache variables retained unchanged.
+//     Revert: restore four lv_obj_t* label pointers and four lv_span_t* pointers.
+//
+//   CHANGE 2 — buildMainUI().
+//     odoCont and intCont (flex lv_obj containers) removed.
+//     Replaced with spanOdo and spanInt (lv_spangroup, LV_SPAN_MODE_FIXED,
+//     centered, 160×50px, same position as prior containers).
+//     Each spangroup has two spans: Num (36pt selected font) + Unit (montserrat_16).
+//     Revert: restore odoCont/intCont flex containers and four lv_label children.
+//
+//   CHANGE 3 — applyFont().
+//     lv_obj_set_style_text_font(lblOdoNum/lblIntNum) replaced with
+//     lv_style_set_text_font(&spanOdoNum/spanIntNum->style, f36) +
+//     lv_spangroup_refr_mode() on each spangroup.
+//     Revert: restore two lv_obj_set_style_text_font calls.
+//
+//   CHANGE 4 — applyTheme().
+//     lv_obj_set_style_text_color for lblOdoNum/lblOdoUnit/lblIntNum/lblIntUnit
+//     replaced with lv_style_set_text_color on the four span styles +
+//     lv_spangroup_refr_mode() on each spangroup.
+//     Revert: restore four lv_obj_set_style_text_color calls.
+//
+//   CHANGE 5 — ui_update().
+//     lv_label_set_text(lblOdoNum/lblIntNum) replaced with
+//     lv_span_set_text(spanOdoNum/spanIntNum) + lv_spangroup_refr_mode().
+//     Revert: restore two lv_label_set_text calls.
+//
+//   lv_conf.h: LV_USE_SPAN must be 1.
+//
+//   Font clip audit (160px container, "999.99" + "mi"):
+//     All fonts fit except DSEG14 (~162px). Clip accepted — consistent
+//     with prior LV_LABEL_LONG_CLIP behavior on lblOdoNum/lblIntNum.
+//
+// v1.0.16-NeoGPS
+//   Production boot state: all three LED indicators revert to muted grey
+//   0x888899 on boot. Test green removed.
+//
+//   LED behavior summary (production):
+//
+//   GPS: (ledGps) — fix quality
+//     Grey  0x888899 — no fix (sat < GPS_MIN_SATS)
+//     Green 0x228B22 blink 500 ms — acquiring (sat ok, HDOP > 2.5)
+//     Green 0x228B22 steady — locked (sat ok, HDOP ≤ 2.5)
+//
+//   SATS: (ledSats) — satellite count / fix dimension
+//     Grey  0x888899 — NA, fewer than 3 satellites
+//     Amber 0xCC8800 blink 800 ms — 2D fix, exactly 3 satellites
+//     Green 0x228B22 steady — 3D fix, 4+ satellites
+//
+//   HDOP: (ledHdop) — horizontal dilution of precision
+//     Grey  0x888899 — no fix (h ≥ 99.0)
+//     Green 0x228B22 steady — good (h ≤ 2.5, GPS_MAX_HDOP)
+//     Amber 0xCC8800 blink 800 ms — degraded (2.5 < h ≤ 3.5, GPS_MAX_HDOP_ODO)
+//     Red   0xCC2200 blink 250 ms — poor (h > 3.5)
+//
+//   All LEDs: lv_led_off() never called. lv_led_on() always active.
+//   Color is the sole state signal. Muted grey = inactive/no-data.
+//
+// v1.0.15-NeoGPS
+//   lv_led_off() removed entirely. All LED states now use lv_led_on()
+//   exclusively. lv_led_off() applies brightness scaling (LV_LED_BRIGHT_MIN
+//   = 80, ~31%) which darkens colors unpredictably — this is the root cause
+//   of the GPS black appearance.
+//
+//   Muted "inactive" state now: lv_led_on() + lv_led_set_color(0x888899).
+//   0x888899 is a visible mid-grey, clearly distinct from all semantic
+//   colors and the background 0xDDDDE8.
+//
+//   Changed: gps_blink_cb, sats_blink_cb, hdop_blink_cb — off-tick now
+//   calls lv_led_on() + set_color(0x888899) instead of lv_led_off().
+//   Changed: ui_update() GPS no-fix, SATS NA, HDOP no-fix states.
+//   No logic changes. No position or timing changes.
+//
+// v1.0.14-NeoGPS
+//   lv_led color order fix, HDOP position adjustment, muted color fix.
+//
+//   CHANGE 1 — lv_led_on() called before lv_led_set_color() for all three
+//     LEDs in buildMainUI(). In LVGL 9, lv_led_on() sets brightness to
+//     LV_LED_BRIGHT_MAX and internally resets the color scaling — calling
+//     it after lv_led_set_color() can overwrite the stored color with the
+//     default (black). Correct order: lv_led_on() then lv_led_set_color().
+//     Applied to ledGps, ledSats, ledHdop.
+//
+//   CHANGE 2 — HDOP label/LED position adjusted to clear text overlap.
+//     lblHdopStatic: x 238 → 233. ledHdop: x 276 → 281.
+//     "HDOP:" at montserrat_12 renders ~44px (was estimated at ~34px).
+//     Group re-centered under MENU button with correct text width.
+//
+//   CHANGE 3 — Muted no-fix/NA colors in ui_update() updated from near-black
+//     (0x1A3320 / 0x1A1A33) to visible mid-grey 0x888899. The old colors
+//     were identical to the near-black muted colors but ui_update() fires on
+//     the first tick and overwrites the TEST green boot color, causing the
+//     GPS LED to appear black immediately at boot. 0x888899 is visibly
+//     distinct from both background 0xDDDDE8 and the active semantic colors.
+//     Changed in: GPS no-fix branch, SATS NA branch, HDOP no-fix reqCol
+//     and lv_led_set_color call.
+//
+// v1.0.13-NeoGPS
+//   lv_led shape and color-order fixes.
+//
+//   CHANGE 1 — lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0) added to
+//     all three LEDs. lv_led in LVGL 9 defaults to radius=0 (square).
+//     Added immediately after lv_obj_set_style_bg_opa() for ledGps, ledSats,
+//     ledHdop in buildMainUI().
+//     Revert: remove the three lv_obj_set_style_radius lines.
+//
+//   TEST MODE retained from v1.0.12: all three LEDs boot solid green.
+//
+// v1.0.12-NeoGPS
+//   lv_led bg_opa fix: lv_led_create() in LVGL 9 defaults to
+//   bg_opa = LV_OPA_TRANSP, making the LED background invisible regardless
+//   of lv_led_set_color or lv_led_on calls. Fix: add
+//   lv_obj_set_style_bg_opa(led, LV_OPA_COVER, 0) immediately after each
+//   lv_led_create() call in buildMainUI(). One line per LED, three total.
+//   No other changes. All blink callback and ui_update logic unchanged.
+//
+//   TEST MODE: All three LEDs boot to solid green (0x228B22) + lv_led_on
+//   for Wokwi visual verification. Revert each LED to:
+//     lv_led_set_color(led, lv_color_hex(0x888899 / 0x1A3320 / 0x1A1A33))
+//     lv_led_off(led)
+//   per the /* TEST: revert */ comments in buildMainUI().
+//
+//   CHANGE 1 — lv_obj_set_style_bg_opa(ledGps, LV_OPA_COVER, 0) added.
+//   CHANGE 2 — lv_obj_set_style_bg_opa(ledSats, LV_OPA_COVER, 0) added.
+//   CHANGE 3 — lv_obj_set_style_bg_opa(ledHdop, LV_OPA_COVER, 0) added.
+//
+// v1.0.11-NeoGPS
+//   GPS fix, SATS, and HDOP indicators on scr_main replaced with lv_led
+//   widgets. All three display a static text label ("GPS:", "SATS:",
+//   "HDOP:") beside a 14×14 lv_led. No numeric or text values are shown
+//   on scr_main for these fields; full detail remains on scr_gps.
+//
+//   CHANGE 1 — GPS fix lv_led (ledGps) replaces lblSignal GPS line.
+//     Position: "GPS:" label at (6,8), ledGps 14×14 at (38,9).
+//     States driven by sat and h in ui_update():
+//       No fix (sat < GPS_MIN_SATS): lv_led_off(), color 0x1A3320 (muted
+//         dark green).
+//       Acquiring (sat >= GPS_MIN_SATS but h > GPS_MAX_HDOP): blink green
+//         0x228B22 at 500 ms via gpsBlinkTimer.
+//       Locked (sat >= GPS_MIN_SATS and h <= GPS_MAX_HDOP): lv_led_on(),
+//         0x228B22, steady.
+//     lblSignal removed from buildMainUI(), applyTheme(), ui_update().
+//     New file-scope: ledGps, lblGpsStatic, gpsBlinkTimer, gpsBlinkState,
+//       gpsBlinkPeriod.
+//     Revert: restore lblSignal label widget and remove ledGps/lblGpsStatic
+//       and associated blink state.
+//
+//   CHANGE 2 — SATS lv_led (ledSats) replaces lblSignal SATS line.
+//     Position: "SATS:" label at (6,26), ledSats 14×14 at (44,27).
+//     States driven by sat in ui_update():
+//       NA  (sat < 3):  lv_led_off(), color 0x1A1A33 (muted dark blue-grey).
+//       2D  (sat == 3): lv_led_on(), amber 0xCC8800, blink 800 ms.
+//       3D  (sat >= 4): lv_led_on(), green 0x228B22, steady.
+//     New file-scope: ledSats, lblSatsStatic, satsBlinkTimer, satsBlinkState,
+//       satsBlinkPeriod.
+//     Revert: remove ledSats/lblSatsStatic and associated blink state.
+//
+//   CHANGE 3 — HDOP lv_led (ledHdop) replaces lblHdop text label.
+//     Position: "HDOP:" label at (214,44), ledHdop 14×14 at (258,45).
+//     GPS_MAX_HDOP_ODO 3.5f added (amber band upper bound).
+//     States driven by h in ui_update():
+//       No fix (h >= 99.0):          lv_led_off(), color 0x1A1A33.
+//       Green (h <= GPS_MAX_HDOP):   lv_led_on(), 0x228B22, steady.
+//       Amber (h <= GPS_MAX_HDOP_ODO): lv_led_on(), 0xCC8800, blink 800 ms.
+//       Red   (h >  GPS_MAX_HDOP_ODO): lv_led_on(), 0xCC2200, blink 250 ms.
+//     lblHdop, hdop_blink_cb(), stopHdopBlink(), and all prior hdopBlink*
+//       file-scope variables removed and replaced with LED-native pattern.
+//     New file-scope: ledHdop, lblHdopStatic, hdopBlinkTimer, hdopBlinkState,
+//       hdopBlinkPeriod, hdopBlinkCol.
+//     Revert: restore lblHdop label widget, hdop_blink_cb(), stopHdopBlink(),
+//       and remove ledHdop/lblHdopStatic and associated blink state.
+//
+// ============================================================
+// altura_rally_neogps.ino — Altura Rally Computer  v1.0.10-NeoGPS
+//
+// v1.0.10-NeoGPS
+//   Speed container tap-cycle: avg speed and max speed views.
+//
+//   CHANGE 1 — speedCont promoted to file scope; LV_EVENT_CLICKED handler
+//     added. Tapping the speed container on scr_main cycles speedViewIdx:
+//     0 = current speed ("mph"), 1 = avg speed ("avg"), 2 = max speed ("max").
+//     Tap is ignored while freezeDisplay is true. Device always boots to
+//     speedViewIdx 0 (current speed). speedViewIdx is reset to 0 on
+//     factory reset.
+//
+//   CHANGE 2 — clearOdo_cb() and confirm_freset_cb() reset avgSpeed,
+//     maxSpeed, avgSpeedStartMs, and avgSpeedTimerStarted inside their
+//     existing dataMutex sections. Avg and max are session values tied to
+//     the total odometer, so CLR ODO (left long-press) resets both.
+//
+//   CHANGE 3 — gpsTask() avg/max computation.
+//     On first fix: avgSpeedStartMs = millis(), avgSpeedTimerStarted = true.
+//     On every speed-gate pass: maxSpeed updated if currentSpeedMph exceeds it.
+//     After distance accumulation: avgSpeed = totalTrip / elapsedHours, where
+//     elapsedHours = (millis() - avgSpeedStartMs) / 3600000.0. Both writes
+//     are inside the existing dataMutex section.
+//     Methodology matches reference (gps.ino): wall-clock time from first fix,
+//     total distance ÷ elapsed time. Adapted to imperial miles (not km).
+//
+//   CHANGE 4 — ui_update() snapshots avgSpeed and maxSpeed under mutex.
+//     Display value and unit label selected by speedViewIdx before the
+//     existing freeze guard. uiCacheSpeedViewIdx tracks the last rendered
+//     view index; a view change forces an immediate label refresh even if
+//     the numeric value is unchanged.
+//
+//   New RallyData fields: avgSpeed, maxSpeed, avgSpeedStartMs,
+//     avgSpeedTimerStarted.
+//   New file-scope state: speedViewIdx, uiCacheSpeedViewIdx.
+//   New file-scope object: speedCont (promoted from buildMainUI local).
+//
+// ============================================================
+// altura_rally_neogps.ino — Altura Rally Computer  v1.0.0
+// Target:    ESP32-2432S028R (Cheap Yellow Display / CYD)
+// Framework: Arduino (PlatformIO / VS Code)
+// Authors:   Jason Hack, Ciprian Cristea, Eli Goethel
+//
+// GPS LIBRARY MIGRATION — TinyGPSPlus → NeoGPS (SlashDevin/NeoGPS)
+//   Base: altura_rally_ciprian.ino (v1.0.4-aw Bronit haversine accumulator,
+//         no KF, no cal screens, TinyGPSPlus GPS pipeline)
+//   GPS pipeline: migrated from TinyGPSPlus 1.1.0 to NeoGPS 4.x,
+//   preserving 1:1 functional parity for all rally logic.
+//
+//   Why NeoGPS:
+//     Coherency: NeoGPS accumulates an entire RMC+GGA sentence-set into a
+//     single gps_fix struct before returning it, eliminating the stale-field
+//     mixing problem inherent in TinyGPSPlus (e.g. speed from a prior RMC
+//     paired with location from a new GGA).
+//     Precision: NeoGPS stores HDOP and coordinates in integer-scaled form
+//     internally, avoiding floating-point accumulation in the parser itself.
+//     Performance: smaller code path, no per-byte encode() overhead;
+//     gps.available(GNSS) returns only on a complete, checksum-valid set.
+//     Phantom-spike elimination: fix.valid.location is set only when the
+//     coordinate parses cleanly — no equivalent of TinyGPSPlus's
+//     GPS_INVALID_F_ANGLE (~1e6) sentinel leaking through isValid().
+//
+//   GPS pipeline changes (gpsTask):
+//     #include <TinyGPSPlus.h>         → #include <NMEAGPS.h>
+//     TinyGPSPlus gps;                 → static NMEAGPS gps; static gps_fix fix;
+//     while (GNSS.available())         → while (gps.available(GNSS))
+//       gps.encode(GNSS.read())            fix = gps.read()
+//     if (gps.location.isUpdated())    → if (!fix.valid.location) { update
+//                                          display fields; continue; }
+//     gps.location.isValid()           → fix.valid.location (always true at
+//                                          this point in the flow)
+//     gps.location.lat/lng()           → fix.latitude() / fix.longitude()
+//     gps.speed.kmph()                 → fix.speed_kph()
+//     gps.speed.mph()                  → fix.speed_mph()
+//     gps.hdop.hdop()                  → (double)fix.hdop / 1000.0
+//                                        (NeoGPS stores hdop as uint16 ×1000)
+//     gps.satellites.value()           → fix.satellites
+//     gps.time.isValid()&&isUpdated()  → fix.valid.time
+//     gps.time.hour/minute/second()    → fix.dateTime.hours/minutes/seconds
+//     TinyGPSPlus::distanceBetween()   → haversineM() local static function
+//                                        (NeoGPS has no built-in haversine;
+//                                         formula, Earth radius, and precision
+//                                         are identical to TinyGPSPlus)
+//   Required src/ files (add alongside this sketch):
+//     GPSfix_cfg.h   — enables LOCATION, SPEED, TIME, HDOP, SATELLITES only
+//     NMEAGPS_cfg.h  — enables RMC+GGA; LAST_SENTENCE=GGA; ACCUMULATE_FIX
+//
+// Libraries:
+//   LVGL              9.2.2
+//   TFT_eSPI          2.5.x (Bodmer)
+//   XPT2046_Touchscreen 1.4 (Stoffregen)
+//   NeoGPS            4.x (SlashDevin)   ← replaces TinyGPSPlus
+//
+// platformio.ini:
+//   [env:esp32dev]
+//   platform  = espressif32
+//   board     = esp32dev
+//   framework = arduino
+//   lib_deps  =
+//     lvgl/lvgl @ ^9.2.2
+//     bodmer/TFT_eSPI @ ^2.5.43
+//     paulstoffregen/XPT2046_Touchscreen @ ^1.4
+//     slashdevin/NeoGPS @ ^4.2.9           ; replaces mikalhart/TinyGPSPlus
+//   build_flags =
+//     -DUSER_SETUP_LOADED
+//     -DILI9341_2_DRIVER
+//     -DTFT_WIDTH=240
+//     -DTFT_HEIGHT=320
+//     -DTFT_MISO=12
+//     -DTFT_MOSI=13
+//     -DTFT_SCLK=14
+//     -DTFT_CS=15
+//     -DTFT_DC=2
+//     -DTFT_RST=-1
+//     -DTFT_BL=21
+//     -DTFT_BACKLIGHT_ON=1
+//     -DTOUCH_CS=33
+//     -DUSE_HSPI_PORT
+//     -DSPI_FREQUENCY=55000000
+//     -DSPI_READ_FREQUENCY=20000000
+//     -DSPI_TOUCH_FREQUENCY=2500000
+//     -DLV_CONF_INCLUDE_SIMPLE
+//
+// ============================================================
+
+#include <NMEAGPS.h>       /* NeoGPS — replaces TinyGPSPlus (v1.0.0-NeoGPS CHANGE 1) */
+#include <HardwareSerial.h>
+#include <Preferences.h>
+#include <esp_task_wdt.h>
+#include <esp_wifi.h>
+#include <esp_bt.h>
+#include <lvgl.h>
+#include <TFT_eSPI.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
+
+// =====================
+// ====== CONFIG =======
+// =====================
+// Portrait native dims passed to lv_tft_espi_create — LVGL rotates to landscape
+// via lv_display_set_rotation(LV_DISPLAY_ROTATION_90). UI layout coords are 320x240.
+#define SCREEN_WIDTH  240
+#define SCREEN_HEIGHT 320
+#define GPS_RX_PIN    22
+#define GPS_TX_PIN    27
+
+#define TOUCH_CS    33
+// TOUCH_IRQ (GPIO 36) intentionally not defined — tirqTouched() removed in v2.2.6.
+// XPT2046_Touchscreen constructed with 255 (no IRQ pin) so the driver
+// does not configure or poll GPIO 36. touch.touched() queries via SPI only.
+#define TOUCH_MOSI  32
+#define TOUCH_MISO  39
+#define TOUCH_CLK   25
+
+#define FIRMWARE_VERSION "v1.0.41-NeoGPS"
+
+#define WDT_TIMEOUT_S    5
+#define METERS_TO_FEET   3.28084f     /* meters to feet — altitude display */
+
+// UTC offset in hours — stored in Preferences key "utc_offset".
+// Default: -5 (GMT-5 / Eastern Standard Time).
+#define UTC_OFFSET_DEFAULT (-5)
+
+// GPS quality gates for distance accumulation
+#define GPS_MIN_SATS         3
+#define GPS_MAX_HDOP         2.5f   /* tightened from 3.0; industry "good" threshold */
+#define GPS_MAX_HDOP_ODO     3.5f   /* amber band upper bound — HDOP LED (v1.0.11-NeoGPS CHANGE 3).
+                                       Green: h <= GPS_MAX_HDOP (2.5). Amber: h <= GPS_MAX_HDOP_ODO (3.5).
+                                       Red:   h >  GPS_MAX_HDOP_ODO. */
+#define GPS_HDOP_NO_FIX      99.0   /* sentinel value reported by NEO-6M when no fix is available.
+                                       The module outputs HDOP=99.9 in NMEA, which NeoGPS stores as
+                                       fix.hdop = 99000 (uint16 ×1000); rally.hdop is initialised to
+                                       99.9 at boot. The no-fix branch threshold is 99.0 — any value
+                                       at or above this indicates no valid HDOP measurement. Used by
+                                       ui_update() to select the red spinner state for ledHdop and
+                                       to compute hdopBand for the gpsTable row highlight. */
+// Speed gate — minimum speed to open accumulation (stationary noise rejection).
+// with the now-native miles pipeline.
+#define GPS_MIN_SPEED_MPH    1.864f  /* mph — accumulation gate (was GPS_MIN_SPEED_KMH 3.0 km/h) */
+
+// Speed-change sanity gate — mirrors source abs(fix.speed_kph() - speed) < 200.0,
+// converted to mph. 200 km/h = 124.274 mph.
+// Rejects any GPS fix where the reported speed changed by more than 124 mph
+// since the previous accepted fix. Catches position/speed glitches that would
+// otherwise inject a large spurious distance increment.
+// v1.0.9-NeoGPS CHANGE 1: converted from km/h to mph for unit consistency.
+#define GPS_SPEED_SANITY_MPH 124.0f  /* mph — max plausible speed change per fix (was 200.0 km/h) */
+
+#define GPS_MAX_STEP_MI      1.0f    /* miles — hard cap on DistanceMiles() per tick.
+                                         Rejects phantom jumps from any coordinate corruption that
+                                         slips through fix.valid.location.
+                                         Max legitimate tick at 130 mph = 0.0072 mi; cap is 139×
+                                         that.  Smallest observed phantom = 4,600 mi — exceeds
+                                         cap by 4 orders of magnitude. (v1.0.4-aw, unit v1.0.8) */
+
+// GPS_MIN_SATS, GPS_MAX_HDOP, and GPS_MAX_HDOP_ODO retained: used by
+// ui_update() for the GPS fix, SATS, and HDOP lv_led indicators on scr_main.
+// NOT used as accumulation gates — the source did not gate on HDOP or
+// satellite count.
+
+// UI screen transition durations (v4.9.11 CHANGE 2 — reduced for snappier navigation).
+// UI_ANIM_SLIDE_MS: slide-left / slide-right transitions between menu screens.
+//   Reduced 250 → 150 ms. Applied to all lv_screen_load_anim MOVE_LEFT/MOVE_RIGHT calls.
+// UI_ANIM_FADE_MS:  fade-in transitions (auto-return, cal screens, splash exit).
+//   Reduced 300/400 → 200 ms. Applied to all lv_screen_load_anim FADE_IN calls.
+// Revert: restore UI_ANIM_SLIDE_MS to 250 and UI_ANIM_FADE_MS to 300.
+#define UI_ANIM_SLIDE_MS  150u   /* ms — slide transition duration (was 250) */
+#define UI_ANIM_FADE_MS   200u   /* ms — fade-in transition duration (was 300/400) */
+
+// Periodic ODO save threshold (v4.9.8 CHANGE 7: raised 100 m → 1 mile).
+// At the prior 100-metre interval, NVS was written every 3.7 s at 60 mph —
+// ~966 writes/hour, ~7725 writes/day in an 8-hour session.  The ESP32 NVS
+// partition (~2.4 M effective writes across 24 KB wear-levelled flash) would
+// approach wear limits in ~311 days of full-day use at 60 mph.  The 100-metre
+// interval was smaller than necessary: a power-cut loss of ≤100 m is
+// invisible to the odometer (stages are 5–25 miles), but the NVS cost was real.
+//
+// At 1 mile: write every 60 s at 60 mph — 60 writes/hour, 480 writes/day —
+// 16× fewer writes, NVS life extended to ~5000 days at the same usage.
+// Maximum data loss on hard power cut: 1 mile.  For a rally odometer this is
+// acceptable: less than the distance to the first timing control on any stage,
+// and the odometer is explicitly saved on every ODO CLEAR and FACTORY RESET
+// operation regardless of this threshold.
+//
+#define ODO_SAVE_INTERVAL_MI (1.0) /* miles — NVS save threshold; trip and odo are natively miles */
+
+// Backlight PWM — GPIO 21, channel 0, 5 kHz, 8-bit resolution
+#define BL_PWM_CHANNEL   0
+#define BL_PWM_FREQ      5000
+#define BL_PWM_RES       8
+
+// Brightness cycle levels (4 steps). Stored in NVS key "brightness".
+static const uint8_t BL_LEVELS[]   = { 64, 128, 192, 255 };
+static const uint8_t BL_NUM_LEVELS = 4;
+
+// LVGL draw buffer — sized for 1/5th of the screen (v4.9.11 CHANGE 3, raised from 1/10).
+// Two DMA-capable buffers allocated at runtime in setup() via heap_caps_malloc.
+// Double-buffering: while Buffer A is sent to the ILI9341 via DMA, LVGL
+// renders the next frame into Buffer B, eliminating CPU stalls at 55 MHz SPI.
+// At 1/5: each buffer = 30,720 bytes; two buffers = 61,440 bytes total DMA SRAM.
+// Effect: LVGL completes a full-screen render in 5 partial passes instead of 10,
+// halving SPI DMA round-trips per frame. Most visible on scrolling screens and
+// screen transitions. WiFi/BT disabled in setup() — no competing DMA allocation.
+#define DRAW_BUF_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT / 5 * (LV_COLOR_DEPTH / 8))
+static lv_color_t * draw_buf1 = nullptr;
+static lv_color_t * draw_buf2 = nullptr;
+static uint32_t lastTick = 0; /* tracks real elapsed time for lv_tick_inc */
+
+// =====================
+// ====== THEMES =======
+// =====================
+// Each theme defines 5 colours used throughout all screens.
+// COL_BG   — screen background
+// COL_FG   — primary text, dividers
+// COL_BTN  — navigation buttons (MENU, BACK, FRZ, CLR)
+// COL_TILE — menu grid tiles (normal state)
+// COL_GPS  — GPS signal label on main screen (muted variant of FG)
+//
+// Tile pressed state is always COL_TILE darkened ~30% (computed in applyTheme).
+// Button pressed state is always COL_BTN darkened ~20%.
+
+struct Theme {
+    uint32_t bg;
+    uint32_t fg;
+    uint32_t btn;
+    uint32_t tile;
+    uint32_t gps;
+};
+
+// =====================
+// ====== FONTS ========
+// =====================
+// Ten selectable display fonts for numeric readouts (speed, distances).
+// UI chrome (headers, buttons, GPS, clock, font screens) always uses Montserrat.
+//
+// Font index (alphabetical, Montserrat pinned at 0):
+//   0  Montserrat      — built into LVGL, always available, no C file needed
+//   1  B612            — Airbus cockpit readability (SIL OFL). src/b612_24/40/48.c
+//   2  DIN1451         — Alte DIN 1451 Mittelschrift (SIL OFL). src/din1451_24/40/48.c
+//   3  DSEG14          — 14-segment LED Classic (SIL OFL). src/dseg14_24/40/48.c
+//   4  DSEG7           — 7-segment LED Classic (SIL OFL). src/dseg7_24/40/48.c
+//   5  LCD             — LCD14 14-segment (SIL OFL). src/lcd14_24/40/48.c
+//   6  Segment7        — Authentic 7-seg calculator (SIL OFL). src/segment7_24/40/48.c
+//   7  Share Tech Mono — Avionics/HMI mono (SIL OFL). src/sharetechmono_24/40/48.c
+//
+// All C files generated via lv_font_conv --bpp 2 --range 0x20-0x7E
+// 24pt used on scr_font preview rows. 40pt/48pt used on main screen readouts.
+// Fonts 1-4: ifdef guards fall back to Montserrat if C files absent.
+// Fonts 5-7: C files present in src/, always resolve.
+// v1.0.38-NeoGPS CHANGE 1 — _36 C files replaced with _40; #ifdef guards updated.
+
+// --- Font 1: B612 ---
+#ifdef LV_FONT_B612_40
+  extern lv_font_t b612_12;
+  extern lv_font_t b612_24;
+  extern lv_font_t b612_40;
+  extern lv_font_t b612_48;
+  #define FONT_B612_12 &b612_12
+  #define FONT_B612_24 &b612_24
+  #define FONT_B612_40 &b612_40
+  #define FONT_B612_48 &b612_48
+#else
+  #define FONT_B612_12 &lv_font_montserrat_12
+  #define FONT_B612_24 &lv_font_montserrat_24
+  #define FONT_B612_40 &lv_font_montserrat_40
+  #define FONT_B612_48 &lv_font_montserrat_48
+#endif
+
+// --- Font 2: DIN1451 ---
+#ifdef LV_FONT_DIN1451_40
+  extern lv_font_t din1451_12;
+  extern lv_font_t din1451_24;
+  extern lv_font_t din1451_40;
+  extern lv_font_t din1451_48;
+  #define FONT_DIN1451_12 &din1451_12
+  #define FONT_DIN1451_24 &din1451_24
+  #define FONT_DIN1451_40 &din1451_40
+  #define FONT_DIN1451_48 &din1451_48
+#else
+  #define FONT_DIN1451_12 &lv_font_montserrat_12
+  #define FONT_DIN1451_24 &lv_font_montserrat_24
+  #define FONT_DIN1451_40 &lv_font_montserrat_40
+  #define FONT_DIN1451_48 &lv_font_montserrat_48
+#endif
+
+// --- Font 3: DSEG14 ---
+#ifdef LV_FONT_DSEG14_40
+  extern lv_font_t dseg14_12;
+  extern lv_font_t dseg14_24;
+  extern lv_font_t dseg14_40;
+  extern lv_font_t dseg14_48;
+  #define FONT_DSEG14_12 &dseg14_12
+  #define FONT_DSEG14_24 &dseg14_24
+  #define FONT_DSEG14_40 &dseg14_40
+  #define FONT_DSEG14_48 &dseg14_48
+#else
+  #define FONT_DSEG14_12 &lv_font_montserrat_12
+  #define FONT_DSEG14_24 &lv_font_montserrat_24
+  #define FONT_DSEG14_40 &lv_font_montserrat_40
+  #define FONT_DSEG14_48 &lv_font_montserrat_48
+#endif
+
+// --- Font 4: DSEG7 ---
+#ifdef LV_FONT_DSEG7_40
+  extern lv_font_t dseg7_12;
+  extern lv_font_t dseg7_24;
+  extern lv_font_t dseg7_40;
+  extern lv_font_t dseg7_48;
+  #define FONT_DSEG7_12 &dseg7_12
+  #define FONT_DSEG7_24 &dseg7_24
+  #define FONT_DSEG7_40 &dseg7_40
+  #define FONT_DSEG7_48 &dseg7_48
+#else
+  #define FONT_DSEG7_12 &lv_font_montserrat_12
+  #define FONT_DSEG7_24 &lv_font_montserrat_24
+  #define FONT_DSEG7_40 &lv_font_montserrat_40
+  #define FONT_DSEG7_48 &lv_font_montserrat_48
+#endif
+
+// --- Font 5: LCD (LCD14) ---
+extern lv_font_t lcd14_12;
+extern lv_font_t lcd14_24;
+extern lv_font_t lcd14_40;
+extern lv_font_t lcd14_48;
+#define FONT_LCD_12 &lcd14_12
+#define FONT_LCD_24 &lcd14_24
+#define FONT_LCD_40 &lcd14_40
+#define FONT_LCD_48 &lcd14_48
+
+// --- Font 6: Segment7 ---
+extern lv_font_t segment7_12;
+extern lv_font_t segment7_24;
+extern lv_font_t segment7_40;
+extern lv_font_t segment7_48;
+#define FONT_SEGMENT7_12 &segment7_12
+#define FONT_SEGMENT7_24 &segment7_24
+#define FONT_SEGMENT7_40 &segment7_40
+#define FONT_SEGMENT7_48 &segment7_48
+
+// --- Font 7: Share Tech Mono ---
+extern lv_font_t sharetechmono_12;
+extern lv_font_t sharetechmono_24;
+extern lv_font_t sharetechmono_40;
+extern lv_font_t sharetechmono_48;
+#define FONT_SHARETECHMONO_12 &sharetechmono_12
+#define FONT_SHARETECHMONO_24 &sharetechmono_24
+#define FONT_SHARETECHMONO_40 &sharetechmono_40
+#define FONT_SHARETECHMONO_48 &sharetechmono_48
+
+// --- FA clock symbol (v1.0.30-NeoGPS CHANGE 1) ---
+// Single-glyph FontAwesome font for the CLOCK tile icon on scr_menu.
+// U+F017 = FA classic regular clock outline. UTF-8: EF 80 97.
+// Generated: lv_font_conv --bpp 2 --size 36 --range 0xF017 → fa_clock_36.c
+// Source file: src/fa_clock_36.c
+extern lv_font_t fa_clock_36;
+#define FA_CLOCK_SYMBOL "\xEF\x80\x97"
+
+// --- FA circle-half-stroke symbol (v1.0.31-NeoGPS CHANGE 1) ---
+// Single-glyph FontAwesome font for the BRIGHT tile icon on scr_menu.
+// U+F042 = FA solid circle-half-stroke. UTF-8: EF 81 82.
+// Generated: lv_font_conv --bpp 2 --size 36 --range 0xF042 → fa_circle_half_36.c
+// Source file: src/fa_circle_half_36.c
+extern lv_font_t fa_circle_half_36;
+#define FA_CIRCLE_HALF_SYMBOL "\xEF\x81\x82"
+
+// --- FA font symbol (v1.0.31-NeoGPS CHANGE 1) ---
+// Single-glyph FontAwesome font for the FONT tile icon on scr_menu.
+// U+F031 = FA solid font icon. UTF-8: EF 80 B1.
+// Generated: lv_font_conv --bpp 2 --size 36 --range 0xF031 → fa_font_36.c
+// Source file: src/fa_font_36.c
+extern lv_font_t fa_font_36;
+#define FA_FONT_SYMBOL "\xEF\x80\xB1"
+
+static const char * FONT_NAMES[] = {
+    "Montserrat", "B612", "DIN1451", "DSEG14", "DSEG7",
+    "LCD", "Segment7", "ShareTechMono"
+};
+static const uint8_t NUM_FONTS   = 8;
+static uint8_t fontIdx           = 0;   /* Default: Montserrat */
+static uint8_t pendingFontIdx    = 0;   /* staged selection on the font picker screen */
+
+static const Theme THEMES[] = {
+    // 0  Altura      — light blue-grey bg, deep navy fg (default)
+    { 0xDDDDE8, 0x1A2A6C, 0x8A8A8A, 0x2A3A7C, 0x555577 },
+    // 1  Night Stage — pure black bg, rally red fg (classic Brantz LED style)
+    { 0x000000, 0xFF2200, 0x330000, 0x550000, 0xFF2200 },
+    // 2  Day Stage   — white bg, black fg, orange btns (max sunlight contrast)
+    { 0xFFFFFF, 0x000000, 0xE05000, 0xC04000, 0x333333 },
+    // 3  Stealth     — charcoal bg, instrument green fg (night-vision safe)
+    { 0x1A1A1A, 0x00CC44, 0x0A2A0A, 0x0A3A0A, 0x00CC44 },
+    // 4  Cobalt      — navy bg, ice blue fg
+    { 0x0D1B2A, 0x5BC8F5, 0x1A3A5C, 0x1A3A5C, 0x5BC8F5 },
+    // 5  Ember       — near-black bg, amber fg (analogue instrument warmth)
+    { 0x0F0A00, 0xFFB300, 0x3A2800, 0x3A2800, 0xFFB300 },
+    // 6  Arctic      — pale ice bg, deep teal fg
+    { 0xE8F4F8, 0x00474F, 0x2E7D8A, 0x2E7D8A, 0x005F6B },
+    // 7  Motorsport  — pure white bg, racing red fg
+    { 0xFFFFFF, 0xC8102E, 0x8B0000, 0xA0001A, 0xC8102E },
+    // 8  Safari      — khaki bg, dark olive fg
+    { 0xD4C5A9, 0x3B2F0A, 0x6B5A2A, 0x5A4A1A, 0x5A4A1A },
+    // 9  Monochrome  — off-white bg, near-black fg
+    { 0xF0F0F0, 0x101010, 0x505050, 0x404040, 0x303030 },
+    // 10 Racetrack   — asphalt grey bg, vivid yellow fg
+    { 0x2B2B2B, 0xFFE000, 0x3A3A00, 0x4A4A00, 0xFFE000 },
+    // 11 Enduro      — forest green bg, sand fg
+    { 0x1A2E1A, 0xD4C5A9, 0x2A4A2A, 0x2A4A2A, 0xD4C5A9 },
+    // 12 Midnight    — deep navy bg, soft white fg
+    { 0x0A0F1E, 0xE8EAF0, 0x1A2A4A, 0x1A2A4A, 0xA0A8C0 },
+    // 13 Sunset      — warm terracotta bg, off-white fg
+    { 0x2D1B0E, 0xF5CBA7, 0x6B3A1F, 0x6B3A1F, 0xF5CBA7 },
+    // 14 Ice Rally   — white bg, vivid cyan fg
+    { 0xFFFFFF, 0x007ACC, 0x0055A0, 0x0055A0, 0x007ACC },
+    // 15 Tarmac      — dark charcoal bg, vivid orange fg
+    { 0x1C1C1C, 0xFF6600, 0x402000, 0x402000, 0xFF6600 },
+    // 16 Parchment   — warm cream bg, dark brown fg
+    { 0xF5EDD6, 0x2C1A0E, 0x7A5C3A, 0x7A5C3A, 0x5A3A1E },
+};
+static const char * THEME_NAMES[] = {
+    "Altura", "Night Stage", "Day Stage", "Stealth",
+    "Cobalt", "Ember", "Arctic", "Motorsport",
+    "Safari", "Mono", "Racetrk", "Enduro",
+    "Midnight", "Sunset", "Ice Rally", "Tarmac",
+    "Parchment"
+};
+static const uint8_t NUM_THEMES   = 17;
+static uint8_t themeIdx           = 0;
+static uint8_t pendingThemeIdx    = 0;  /* staged selection on the theme picker screen */
+
+// =====================
+// ====== OBJECTS =====
+// =====================
+static NMEAGPS  gps;   /* NeoGPS sentence-set parser — Core 0 exclusive.
+                          v1.0.0-NeoGPS CHANGE 1: replaces TinyGPSPlus gps. */
+static gps_fix  fix;   /* Coherent fix struct populated by gps.read().
+                          Holds one complete RMC+GGA sentence-set atomically.
+                          Accessed only inside gpsTask() (Core 0). */
+HardwareSerial GNSS(2);
+Preferences prefs;
+SemaphoreHandle_t dataMutex;
+SPIClass touchscreenSPI(VSPI);
+XPT2046_Touchscreen touch(TOUCH_CS, 255);  /* 255 = no IRQ pin; SPI-polled only */
+
+// =====================
+// ====== DATA ========
+// =====================
+struct RallyData {
+    double  totalTrip    = 0.0;
+    double  intervalTrip = 0.0;
+    double  currentSpeed = 0.0;  /* mph — odometer pipeline */
+    double  avgSpeed     = 0.0;  /* mph — total distance ÷ elapsed wall-clock time since first fix (v1.0.10-NeoGPS CHANGE 3) */
+    double  maxSpeed     = 0.0;  /* mph — session peak speed (v1.0.10-NeoGPS CHANGE 3) */
+    double  hdop         = 99.9;
+    int32_t satellites   = 0;
+    double  altMeters    = 0.0;
+    double  latitude     = 0.0;
+    double  longitude    = 0.0;
+    uint8_t gpsHour      = 0;
+    uint8_t gpsMinute    = 0;
+    uint8_t gpsSecond    = 0;
+    bool    timeValid    = false;
+    bool    locValid     = false;  /* fix.valid.location snapshot */
+    uint32_t rejectedSteps    = 0; /* ticks discarded by GPS_MAX_STEP_MI — v1.0.0-NeoGPS CHANGE 3 */
+    uint32_t sanityRejections = 0; /* ticks discarded by GPS_SPEED_SANITY_MPH — v1.0.0-NeoGPS CHANGE 3 */
+    uint32_t lastLocFalse     = 0; /* blackout events (fix.valid.location false ticks) — v1.0.2-NeoGPS CHANGE 1 */
+    unsigned long avgSpeedStartMs      = 0;     /* millis() at first fix — avg speed denominator anchor (v1.0.10-NeoGPS CHANGE 3) */
+    bool          avgSpeedTimerStarted = false; /* true once first fix sets avgSpeedStartMs (v1.0.10-NeoGPS CHANGE 3) */
+} rally;
+
+static int8_t  utcOffset        = UTC_OFFSET_DEFAULT;
+static int8_t  pendingUtcOffset = UTC_OFFSET_DEFAULT;  /* staged value on scr_clock — v1.0.23-NeoGPS CHANGE 1 */
+static uint8_t blLevelIdx    = 3;
+
+static NeoGPS::Location_t gpsLastLoc;  /* Anchor for DistanceMiles() — atomic struct copy. */
+static bool    gpsHasFix     = false;
+static bool    freezeDisplay = false;
+static uint32_t freezeStartMs = 0;
+static double  lastSavedOdo  = 0.0;
+
+// ui_update() label cache state (v4.3.0 — CHANGE 3).
+// Each variable stores the last value successfully written to its corresponding
+// label. ui_update() compares the current value against the cache before calling
+// lv_label_set_text / lv_label_set_text_fmt. If the value is unchanged the call
+// is skipped entirely, eliminating the snprintf + LVGL internal processing cost.
+// All variables are written exclusively on Core 1 (LVGL timer context) — no mutex.
+static int32_t uiCacheSpeed   = -1;          /* last int speed written to lblSpeed */
+static char    uiCacheOdo[24] = {0};          /* last odo string written to spanOdoNum (v1.0.17: was lblOdoNum) */
+static char    uiCacheInt[24] = {0};          /* last interval string written to spanIntNum (v1.0.17: was lblIntNum) */
+static int32_t uiCacheSigSat  = -1;          /* last sat count composite gating ledGps update (v1.0.11: repurposed from lblSignal) */
+static char    uiCacheSigTxt[8] = {0};        /* last quality bucket gating ledGps update (v1.0.11: repurposed from lblSignal) */
+static uint8_t uiCacheSecond  = 0xFF;         /* last GPS second written to lblClock (0xFF = uninit) */
+static char    uiCacheTimeStr[12] = {0};      /* last full time string — detects validity flip */
+static int8_t  uiCacheUtcOff  = 0x7F;         /* last UTC offset written to lblUtcOffset (0x7F = uninit) */
+
+// Speed container view state (v1.0.10-NeoGPS CHANGE 1).
+// 0 = current speed ("mph"), 1 = avg speed ("avg"), 2 = max speed ("max").
+// Cycles on tap of speedCont. Always boots to 0. Reset to 0 on factory reset.
+// Written exclusively on Core 1 (LVGL event/timer context) — no mutex required.
+static uint8_t  speedViewIdx        = 0;    /* active view index */
+static int32_t  uiCacheSpeedViewIdx = -1;   /* last rendered view index; -1 forces refresh on first tick */
+
+// FRZ blink timer — non-null only while display is frozen.
+// Alternates btnFrz background at 500 ms. Deleted on unfreeze.
+static lv_timer_t * frzBlinkTimer = nullptr;
+static bool         frzBlinkState = false; /* false = theme colour, true = red */
+
+// GPS fix LED blink state (v1.0.11-NeoGPS CHANGE 1).
+// Non-null only while GPS is in the acquiring state (sat >= GPS_MIN_SATS, h > GPS_MAX_HDOP).
+// Blinks ledGps green at 500 ms. Deleted on fix lock or fix loss.
+// gpsBlinkPeriod: 0 = no timer (locked). 800 = acquiring.
+static lv_timer_t * gpsBlinkTimer  = nullptr;
+static bool         gpsBlinkState  = false;  /* false = on (green), true = off (muted) */
+static uint32_t     gpsBlinkPeriod = 0;      /* period of running timer; 0 = none */
+
+// SATS LED blink state (v1.0.11-NeoGPS CHANGE 2).
+// Non-null only while sat == 3 (2D fix, amber 800 ms blink).
+// satsBlinkPeriod: 0 = no timer (NA or 3D). 800 = 2D.
+// satsBlinkCol: semantic colour for current band on-tick (v1.0.24-NeoGPS CHANGE 1).
+// Mirrors hdopBlinkCol pattern — required because sat < 3 now also blinks (red 250 ms).
+static lv_timer_t * satsBlinkTimer  = nullptr;
+static bool         satsBlinkState  = false;  /* false = on (semantic colour), true = off (muted) */
+static uint32_t     satsBlinkPeriod = 0;      /* period of running timer; 0 = none */
+static uint32_t     satsBlinkCol    = 0xCC8800; /* semantic colour for current band on-tick (v1.0.24-NeoGPS CHANGE 1) */
+
+// HDOP LED blink state (v1.0.11-NeoGPS CHANGE 3).
+// Replaces prior hdopBlinkTimer/hdopBlinkCol/hdopBlinkPeriod/hdopBlinkState
+// which drove text-colour toggling on lblHdop.
+// Now drives lv_led_on/off toggling on ledHdop.
+// hdopBlinkPeriod: 0 = boot default. 0xFFFFFFFEu = no-fix (spinner). 0xFFFFFFFFu = green steady. 800 = amber. 250 = red.
+static lv_timer_t * hdopBlinkTimer  = nullptr;
+static bool         hdopBlinkState  = false;  /* false = on (semantic colour), true = off (led dim) */
+static uint32_t     hdopBlinkPeriod = 0;      /* period of running timer; 0 = none */
+static uint32_t     hdopBlinkCol    = 0x228B22; /* semantic colour for current band on-tick */
+
+// Shared scrollbar style for themeList and fontList (v4.6.0).
+// Must be file-scope static — LVGL holds a pointer to this struct for the
+// widget lifetime. Stack allocation would cause a dangling pointer.
+static lv_style_t scrollbarStyle;
+static bool       scrollbarStyleInit = false;
+
+// =====================
+// ====== SCREENS =====
+// =====================
+static lv_obj_t *scr_splash;
+static lv_obj_t *scr_main;
+static lv_obj_t *scr_menu;
+static lv_obj_t *scr_gps;
+static lv_obj_t *scr_clock;
+static lv_obj_t *scr_theme;
+static lv_obj_t *scr_font;
+static lv_obj_t *scr_freset;
+
+// --- CLR ODO / CLR INT long-press progress timers (v4.5.1 UX 1) ---
+// Every object that carries a theme colour is promoted to file scope.
+// applyTheme() iterates these to recolour all screens in place.
+
+// --- Backgrounds (one per screen) ---
+// Screens themselves are the background — styled via lv_obj_set_style_bg_color on the screen obj.
+
+// --- Main screen ---
+static lv_obj_t *lblSpeed;
+static lv_obj_t *lblSpeedUnit;
+static lv_obj_t *speedCont;     /* promoted to file scope — tap event cycles speed view (v1.0.10-NeoGPS CHANGE 1) */
+/* v1.0.17-NeoGPS CHANGE 1 — TOTAL/TRIP readouts converted from lv_label pairs
+   to lv_spangroup widgets. lblOdoNum/lblOdoUnit/lblIntNum/lblIntUnit removed.
+   v1.0.35-NeoGPS CHANGE 1 — spanOdoUnit/spanIntUnit removed; "mi" unit dropped. */
+static lv_obj_t  *spanOdo;      /* lv_spangroup — TOTAL readout */
+static lv_span_t *spanOdoNum;   /* number span — selected font 40pt */
+static lv_obj_t  *spanInt;      /* lv_spangroup — TRIP readout */
+static lv_span_t *spanIntNum;   /* number span — selected font 40pt */
+static lv_obj_t *lblOdoHdr;
+static lv_obj_t *lblIntHdr;
+/* v1.0.11-NeoGPS CHANGE 1/2/3 — GPS fix, SATS, and HDOP lv_led indicators.
+   lblSignal and lblHdop removed; replaced with lv_led widgets + static text labels. */
+static lv_obj_t *lblGpsStatic;  /* static "GPS:"  text beside ledGps  */
+static lv_obj_t *ledGps;        /* lv_led — GPS fix state              */
+static lv_obj_t *spinnerGps;    /* lv_spinner — shown only in no-fix state (v1.0.24-NeoGPS CHANGE 1) */
+static lv_obj_t *lblSatsStatic; /* static "SATS:" text beside ledSats */
+static lv_obj_t *ledSats;       /* lv_led — satellite count / fix type */
+static lv_obj_t *lblHdopStatic; /* static "HDOP:" text beside ledHdop */
+static lv_obj_t *ledHdop;       /* lv_led — HDOP band                  */
+static lv_obj_t *spinnerHdop;   /* lv_spinner — shown only when h >= 99.0 (v1.0.24-NeoGPS CHANGE 1) */
+static lv_obj_t *lblClock;
+static lv_obj_t *btnFrz;
+static lv_obj_t *lblFrz;
+static lv_obj_t *btnMenu;
+static lv_obj_t *btnClearOdo;
+static lv_obj_t *btnClearInt;
+
+// --- Menu screen ---
+static lv_obj_t *lblMenuTitle;
+static lv_obj_t *lblMenuVersion;
+static lv_obj_t *divMenu;
+static lv_obj_t *btnMenuBack;
+static lv_obj_t *tileBright;
+static lv_obj_t *tileGpsMenu;
+static lv_obj_t *tileClock;
+static lv_obj_t *tileTheme;
+static lv_obj_t *tileFont;
+static lv_obj_t *tileFreset;
+static lv_obj_t *lblBrightPct;
+static lv_obj_t *lblThemeName;
+static lv_obj_t *lblFontName;
+// Tile icon and caption labels — promoted to file scope so applyTheme()
+// can recolour them when the active theme changes fg brightness.
+static lv_obj_t *iconBright;
+static lv_obj_t *capBright;
+static lv_obj_t *iconGps;
+static lv_obj_t *capGps;
+static lv_obj_t *iconClk;
+static lv_obj_t *capClk;
+static lv_obj_t *iconTheme;
+static lv_obj_t *capTheme;
+static lv_obj_t *iconFont;
+static lv_obj_t *capFont;
+static lv_obj_t *iconFreset;
+static lv_obj_t *capFreset;
+
+// --- Theme picker screen ---
+static lv_obj_t *lblThemeTitle;
+static lv_obj_t *divTheme;
+static lv_obj_t *btnThemeBack;
+static lv_obj_t *btnThemeConfirm;
+static lv_obj_t *themeList;       /* lv_list scroll container */
+
+// --- Font picker screen ---
+static lv_obj_t *lblFontTitle;
+static lv_obj_t *divFontScr;
+static lv_obj_t *btnFontBack;
+static lv_obj_t *btnFontConfirm;
+static lv_obj_t *fontList;        /* scroll container */
+
+// --- Factory reset confirm screen ---
+static lv_obj_t *lblFresetTitle;
+static lv_obj_t *divFreset;
+static lv_obj_t *lblFresetWarning;
+static lv_obj_t *lblFresetStatus;
+static lv_obj_t *btnFresetCancel;
+static lv_obj_t *btnFresetConfirm;
+
+// --- GPS screen ---
+// v1.0.20-NeoGPS: replaced individual lv_label pairs + gpsScrollList flex container
+// with a single lv_table widget (gpsTable). Row indices are named constants so
+// buildGpsUI(), applyTheme(), and ui_update() all use the same mapping.
+// lv_conf.h: LV_USE_TABLE must be 1.
+#define GPS_ROW_LAT    0u
+#define GPS_ROW_LON    1u
+#define GPS_ROW_ALT    2u
+#define GPS_ROW_HDOP   3u
+#define GPS_ROW_FIX    4u
+#define GPS_ROW_SATS   5u
+#define GPS_ROW_REJSTP 6u
+#define GPS_ROW_REJSAN 7u
+#define GPS_ROW_LLF    8u
+#define GPS_NUM_ROWS   9u
+
+static lv_obj_t *lblGpsTitle;
+static lv_obj_t *divGps;
+static lv_obj_t *btnGpsBack;
+static lv_obj_t *gpsTable;        /* lv_table — 2-column diagnostics grid */
+
+// --- CLR ODO / CLR INT press-transition style (v1.0.19-NeoGPS CHANGE 2) ---
+// Replaces the custom 200 ms repeating timer approach (clrOdoTimer/clrIntTimer).
+// A single shared lv_style_t carries an 1800 ms ease-in background-colour
+// transition from the theme btn colour to its 20%-darkened variant on
+// LV_STATE_PRESSED. File-scope + init-once flag: LVGL holds a pointer to
+// this struct for the widget lifetime; stack allocation would be a dangling ptr.
+static lv_style_t clrBtnPressedStyle;
+static bool       clrBtnStyleInit = false;
+
+// v1.0.32-NeoGPS CHANGE 1 — CLR arc progress widgets and timer state
+static lv_obj_t    *arcClearOdo   = nullptr;
+static lv_obj_t    *arcClearInt   = nullptr;
+static lv_timer_t  *clrOdoArcTimer = nullptr;
+static lv_timer_t  *clrIntArcTimer = nullptr;
+static uint8_t      clrOdoArcTick  = 0;  /* 0–39; 40 ticks × 9° = 360° over 2000 ms */
+static uint8_t      clrIntArcTick  = 0;
+
+// --- Factory-reset confirm button danger style (v1.0.19-NeoGPS CHANGE 4) ---
+// Static styles replace inline lv_obj_set_style_bg_color in buildFResetUI()
+// and the applyTheme() override block. Danger colour is theme-independent.
+static lv_style_t dangerBtnStyle;
+static lv_style_t dangerBtnPressedStyle;
+static bool       dangerBtnStyleInit = false;
+
+// --- Clock screen ---
+// pendingUtcOffset: staged selection while scr_clock is open.
+// Seeded from utcOffset on open_clock_cb; committed to utcOffset + NVS by
+// confirm_clock_cb; discarded by back_clock_cb. Matches pendingThemeIdx /
+// pendingFontIdx pattern. v1.0.23-NeoGPS CHANGE 1.
+static lv_obj_t *lblClockTitle;
+static lv_obj_t *divClock;
+static lv_obj_t *btnClockBack;
+static lv_obj_t *btnClockConfirm;  /* v1.0.23-NeoGPS CHANGE 1 */
+static lv_obj_t *lblClockBig;
+static lv_obj_t *lblUtcOffset;
+static lv_obj_t *btnUtcMinus;
+static lv_obj_t *btnUtcPlus;
+
+// =====================
+// ====== TOUCH =======
+// =====================
+void touch_read(lv_indev_t * indev, lv_indev_data_t * data) {
+    // tirqTouched() removed — GPIO 36 (IRQ, input-only) has no hardware
+    // pull-up and can float high mid-press, causing spurious RELEASED events
+    // that reset LVGL's long-press counter. touch.touched() queries the
+    // controller directly via SPI and is immune to IRQ pin state.
+    if (touch.touched()) {
+        TS_Point p = touch.getPoint();
+        data->state    = LV_INDEV_STATE_PRESSED;
+        data->point.x  = map(p.y, 240,  3800, 0, 239);
+        data->point.y  = map(p.x, 3700, 200,  0, 319);
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+// =====================
+// ====== BACKLIGHT ===
+// =====================
+void applyBrightness() {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ledcWrite(TFT_BL, BL_LEVELS[blLevelIdx]);       /* Core 3.x: pin-based */
+#else
+    ledcWrite(BL_PWM_CHANNEL, BL_LEVELS[blLevelIdx]); /* Core 2.x: channel-based */
+#endif
+}
+
+// =====================
+// ====== THEME =======
+// =====================
+// Recolours every themed object across all screens using the current themeIdx.
+// Called once from setup() after all screens are built (applies restored NVS theme),
+// and again from cycle_theme_cb() on each user tap.
+//
+// Tile icons and tile captions are always white — they sit on dark tile backgrounds
+// across all themes and white gives the best contrast universally.
+// Button labels are also always white.
+//
+// Helper: darken a packed 0xRRGGBB colour by reducing each channel by `pct` percent.
+static uint32_t darken(uint32_t c, uint8_t pct) {
+    uint8_t r = (c >> 16) & 0xFF;
+    uint8_t g = (c >>  8) & 0xFF;
+    uint8_t b =  c        & 0xFF;
+    r = (uint8_t)((uint16_t)r * (100 - pct) / 100);
+    g = (uint8_t)((uint16_t)g * (100 - pct) / 100);
+    b = (uint8_t)((uint16_t)b * (100 - pct) / 100);
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+}
+
+// isLight — returns true when a bg colour is perceptually light (>50% luminance).
+// Used to decide whether tile icons/captions should be dark (on light tiles)
+// or white (on dark tiles).
+static bool isLight(uint32_t c) {
+    uint8_t r = (c >> 16) & 0xFF;
+    uint8_t g = (c >>  8) & 0xFF;
+    uint8_t b =  c        & 0xFF;
+    // Rec.601 luma approximation
+    uint32_t luma = (uint32_t)r * 299 + (uint32_t)g * 587 + (uint32_t)b * 114;
+    return (luma > 128000UL);  /* 128000 = 128 * 1000 */
+}
+
+/* Forward declarations — required because PlatformIO compiles as C++ with
+   strict forward-declaration rules (unlike the Arduino IDE which pre-scans).
+   makeBtn is defined in the HELPERS section below makeClrBtn/initClrBtnStyle;
+   it must be declared here so makeClrBtn (which calls it) can see it.
+   initClrBtnStyle and makeClrBtn are called from applyTheme() and buildMainUI()
+   respectively, both of which also precede the HELPERS section.
+   v1.0.19-NeoGPS CHANGE 2. */
+static lv_obj_t * makeBtn(lv_obj_t * parent, int32_t x, int32_t y,
+                            int32_t w, int32_t h, lv_event_cb_t cb,
+                            lv_event_code_t ev = LV_EVENT_CLICKED);
+static void initClrBtnStyle(uint32_t btnCol, uint32_t btnPrCol);
+static lv_obj_t * makeClrBtn(lv_obj_t * parent, int32_t x, int32_t y,
+                               int32_t w, int32_t h, lv_event_cb_t cb);
+static lv_obj_t * makeClrArc(lv_obj_t * parent, int32_t x, int32_t y,
+                               int32_t w, int32_t h); /* v1.0.32-NeoGPS CHANGE 1 */
+
+void applyTheme() {
+    const Theme & t = THEMES[themeIdx];
+    uint32_t btnPr  = darken(t.btn,  20);
+    uint32_t tilePr = darken(t.tile, 30);
+
+    // --- Screen backgrounds ---
+    lv_obj_set_style_bg_color(scr_main,         lv_color_hex(t.bg), 0);
+    lv_obj_set_style_bg_color(scr_menu,         lv_color_hex(t.bg), 0);
+    lv_obj_set_style_bg_color(scr_gps,          lv_color_hex(t.bg), 0);
+    lv_obj_set_style_bg_color(scr_clock,        lv_color_hex(t.bg), 0);
+
+    // --- Main screen labels ---
+    lv_obj_set_style_text_color(lblSpeed,    lv_color_hex(t.fg), 0);
+    lv_obj_set_style_text_color(lblSpeedUnit,lv_color_hex(t.fg), 0);
+    /* v1.0.17-NeoGPS CHANGE 4 — span style recolour replaces lv_obj label calls.
+       v1.0.35-NeoGPS CHANGE 1 — spanOdoUnit/spanIntUnit lines removed ("mi" dropped). */
+    lv_style_set_text_color(lv_span_get_style(spanOdoNum),  lv_color_hex(t.fg));
+    lv_style_set_text_color(lv_span_get_style(spanIntNum),  lv_color_hex(t.fg));
+    lv_spangroup_refr_mode(spanOdo);
+    lv_spangroup_refr_mode(spanInt);
+    lv_obj_set_style_text_color(lblOdoHdr,   lv_color_hex(t.fg), 0);
+    lv_obj_set_style_text_color(lblIntHdr,   lv_color_hex(t.fg), 0);
+    lv_obj_set_style_text_color(lblClock,    lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(lblClock,      lv_color_hex(t.fg), 0);  /* v1.0.34-NeoGPS CHANGE 2 — tinted pill bg tracks theme fg */
+    /* ledGps, ledSats, ledHdop use fixed semantic colours independent of theme —
+       no applyTheme() recolouring needed (v1.0.11-NeoGPS CHANGE 1/2/3). */
+
+    // --- Main screen buttons ---
+    lv_obj_set_style_bg_color(btnFrz,      lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnFrz,      lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btnMenu,     lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnMenu,     lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    /* v1.0.32-NeoGPS CHANGE 1 — CLR buttons: update base colour only.
+       The pressed-style transition is removed; arc overlay is the sole progress
+       signal. clrBtnPressedStyle and initClrBtnStyle() retained for the style
+       object (btn BG stays flat on press — no darken transition).
+       v1.0.19-NeoGPS CHANGE 2 originally re-inited the ease-in transition here;
+       that block is replaced by a plain colour set.
+       v1.0.33-NeoGPS BUG FIX 3 — re-init pressed style to new theme colour and
+       re-attach so LV_STATE_PRESSED tracks the active theme after a theme change. */
+    lv_obj_set_style_bg_color(btnClearOdo, lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnClearInt, lv_color_hex(t.btn),  0);
+    initClrBtnStyle(t.btn, t.btn);
+    lv_obj_remove_style(btnClearOdo, &clrBtnPressedStyle, LV_STATE_PRESSED);
+    lv_obj_remove_style(btnClearInt, &clrBtnPressedStyle, LV_STATE_PRESSED);
+    lv_obj_add_style(btnClearOdo, &clrBtnPressedStyle, LV_STATE_PRESSED);
+    lv_obj_add_style(btnClearInt, &clrBtnPressedStyle, LV_STATE_PRESSED);
+    /* v1.0.19-NeoGPS CHANGE 3 — speedCont pressed-state: translucent bg flash
+       so the tap target gives visible confirmation on a vibrating dashboard. */
+    lv_obj_set_style_bg_color(speedCont, lv_color_hex(t.bg),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa  (speedCont, LV_OPA_20,           LV_STATE_PRESSED);
+
+    // --- Menu screen labels + divider ---
+    lv_obj_set_style_text_color(lblMenuTitle,   lv_color_hex(t.fg), 0);
+    lv_obj_set_style_text_color(lblMenuVersion, lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(divMenu,          lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(btnMenuBack,      lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnMenuBack,      lv_color_hex(btnPr),  LV_STATE_PRESSED);
+
+    // --- Menu tiles ---
+    lv_obj_set_style_bg_color(tileBright,  lv_color_hex(t.tile),  0);
+    lv_obj_set_style_bg_color(tileBright,  lv_color_hex(tilePr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(tileGpsMenu, lv_color_hex(t.tile),  0);
+    lv_obj_set_style_bg_color(tileGpsMenu, lv_color_hex(tilePr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(tileClock,   lv_color_hex(t.tile),  0);
+    lv_obj_set_style_bg_color(tileClock,   lv_color_hex(tilePr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(tileTheme,   lv_color_hex(t.tile),  0);
+    lv_obj_set_style_bg_color(tileTheme,   lv_color_hex(tilePr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(tileFont,    lv_color_hex(t.tile),  0);
+    lv_obj_set_style_bg_color(tileFont,    lv_color_hex(tilePr),  LV_STATE_PRESSED);
+
+    // Factory reset tile — red background regardless of theme to signal danger
+    lv_obj_set_style_bg_color(tileFreset,  lv_color_hex(0x8B0000), 0);
+    lv_obj_set_style_bg_color(tileFreset,  lv_color_hex(0x5A0000), LV_STATE_PRESSED);
+
+    // Tile icons and captions: white on dark tiles, near-black on light tiles.
+    uint32_t tileText = isLight(t.tile) ? 0x101010 : 0xFFFFFF;
+    lv_obj_set_style_text_color(iconBright,   lv_color_hex(tileText), 0);
+    if (capBright) lv_obj_set_style_text_color(capBright, lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(lblBrightPct, lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(iconGps,      lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(capGps,       lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(iconClk,      lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(capClk,       lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(iconTheme,    lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(capTheme,     lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(lblThemeName, lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(iconFont,     lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(capFont,      lv_color_hex(tileText), 0);
+    lv_obj_set_style_text_color(lblFontName,  lv_color_hex(tileText), 0);
+    // Factory reset tile always uses white text (dark red bg across all themes)
+    lv_obj_set_style_text_color(iconFreset,   lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_color(capFreset,    lv_color_hex(0xFFFFFF), 0);
+
+    // --- Factory reset confirm screen ---
+    lv_obj_set_style_bg_color(scr_freset,       lv_color_hex(t.bg),   0);
+    lv_obj_set_style_text_color(lblFresetTitle,  lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(divFreset,         lv_color_hex(t.fg),  0);
+    lv_obj_set_style_text_color(lblFresetWarning,lv_color_hex(t.fg),  0);
+    lv_obj_set_style_text_color(lblFresetStatus, lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(btnFresetCancel,   lv_color_hex(t.btn), 0);
+    lv_obj_set_style_bg_color(btnFresetCancel,   lv_color_hex(btnPr), LV_STATE_PRESSED);
+    /* v1.0.19-NeoGPS CHANGE 4 — btnFresetConfirm uses static dangerBtnStyle;
+       no theme override needed here. Danger colour is theme-independent. */
+
+    // --- Theme picker screen ---
+    lv_obj_set_style_bg_color(scr_theme,      lv_color_hex(t.bg),   0);
+    lv_obj_set_style_text_color(lblThemeTitle, lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(divTheme,        lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(btnThemeBack,    lv_color_hex(t.btn), 0);
+    lv_obj_set_style_bg_color(btnThemeBack,    lv_color_hex(btnPr), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btnThemeConfirm, lv_color_hex(t.btn), 0);
+    lv_obj_set_style_bg_color(btnThemeConfirm, lv_color_hex(btnPr), LV_STATE_PRESSED);
+    // List rows inherit scr_theme bg; their text uses fg.
+    lv_obj_set_style_bg_color(themeList,       lv_color_hex(t.bg),  0);
+    /* Recolour all unselected theme rows to match new bg */
+    {
+		
+// picker_highlight_row — highlights the row at selectedIdx within a list container,
+// resetting all other rows to the current theme background colour.
+#define PICKER_ROW_SELECTED  0xB0B8D8u  /* blue-grey accent for selected row */
+
+        uint32_t childCount = lv_obj_get_child_count(themeList);
+        for (uint32_t ci = 0; ci < childCount; ci++) {
+            lv_obj_t * child = lv_obj_get_child(themeList, (int32_t)ci);
+            uint32_t col = (ci == (uint32_t)pendingThemeIdx)
+                           ? PICKER_ROW_SELECTED
+                           : t.bg;
+            lv_obj_set_style_bg_color(child, lv_color_hex(col), 0);
+            /* Recolour the theme name label (child index 5, after 5 swatches)
+               to t.fg so it remains legible on dark-background themes. */
+            lv_obj_t * lbl = lv_obj_get_child(child, 5);
+            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(t.fg), 0);
+        }
+    }
+
+    // --- Font picker screen ---
+    lv_obj_set_style_bg_color(scr_font,       lv_color_hex(t.bg),   0);
+    lv_obj_set_style_text_color(lblFontTitle,  lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(divFontScr,      lv_color_hex(t.fg),  0);
+    lv_obj_set_style_bg_color(btnFontBack,     lv_color_hex(t.btn), 0);
+    lv_obj_set_style_bg_color(btnFontBack,     lv_color_hex(btnPr), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btnFontConfirm,  lv_color_hex(t.btn), 0);
+    lv_obj_set_style_bg_color(btnFontConfirm,  lv_color_hex(btnPr), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(fontList,        lv_color_hex(t.bg),  0);
+    /* Recolour all unselected font rows to match new bg */
+    {
+        uint32_t childCount = lv_obj_get_child_count(fontList);
+        for (uint32_t ci = 0; ci < childCount; ci++) {
+            lv_obj_t * child = lv_obj_get_child(fontList, (int32_t)ci);
+            uint32_t col = (ci == (uint32_t)pendingFontIdx)
+                           ? PICKER_ROW_SELECTED
+                           : t.bg;
+            lv_obj_set_style_bg_color(child, lv_color_hex(col), 0);
+            /* Recolour the font preview label (child index 0) to t.fg so it
+               remains legible on dark-background themes. */
+            lv_obj_t * lbl = lv_obj_get_child(child, 0);
+            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(t.fg), 0);
+        }
+    }
+
+    // --- GPS screen ---
+    // v1.0.20-NeoGPS: individual label recolours replaced with table-part styles.
+    // LV_PART_MAIN  → table background (matches screen bg).
+    // LV_PART_ITEMS → all cell text colour (theme fg); the draw event callback
+    //                 overrides the HDOP row bg independently of theme.
+    lv_obj_set_style_bg_color(scr_gps,      lv_color_hex(t.bg),   0);
+    lv_obj_set_style_text_color(lblGpsTitle, lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(divGps,        lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(btnGpsBack,    lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnGpsBack,    lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(gpsTable,      lv_color_hex(t.bg),   LV_PART_MAIN);
+    lv_obj_set_style_text_color(gpsTable,    lv_color_hex(t.fg),   LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(gpsTable,      lv_color_hex(t.bg),   LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(gpsTable,        LV_OPA_COVER,         LV_PART_ITEMS);
+    lv_obj_invalidate(gpsTable);  /* trigger redraw so draw-event HDOP colour is re-evaluated */
+    // --- Clock screen ---
+    lv_obj_set_style_text_color(lblClockTitle, lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(divClock,        lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(btnClockBack,    lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnClockBack,    lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btnClockConfirm, lv_color_hex(t.btn),  0);           /* v1.0.23-NeoGPS CHANGE 4 */
+    lv_obj_set_style_bg_color(btnClockConfirm, lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(lblClockBig,   lv_color_hex(t.fg), 0);
+    lv_obj_set_style_text_color(lblUtcOffset,  lv_color_hex(t.fg), 0);
+    lv_obj_set_style_bg_color(btnUtcMinus,     lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnUtcMinus,     lv_color_hex(btnPr),  LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(btnUtcPlus,      lv_color_hex(t.btn),  0);
+    lv_obj_set_style_bg_color(btnUtcPlus,      lv_color_hex(btnPr),  LV_STATE_PRESSED);
+
+}
+
+// =====================
+// ====== FONTS ========
+// =====================
+// Applies the selected display font to numeric readout labels only.
+// Speed (48pt) and distances (40pt) swap font; all other labels stay Montserrat.
+// Fonts 1-4 fall back to Montserrat if their C files are absent.
+// Fonts 5-9 have C files present in src/ and always resolve.
+// v1.0.35-NeoGPS CHANGE 1 — f36 renamed f40; FONT_Xxx_40 macros used for distances.
+void applyFont() {
+    const lv_font_t * f48;
+    const lv_font_t * f40;
+    const lv_font_t * f12;
+
+    switch (fontIdx) {
+        case 1:  f48 = FONT_B612_48;          f40 = FONT_B612_40;          f12 = FONT_B612_12;          break;
+        case 2:  f48 = FONT_DIN1451_48;       f40 = FONT_DIN1451_40;       f12 = FONT_DIN1451_12;       break;
+        case 3:  f48 = FONT_DSEG14_48;        f40 = FONT_DSEG14_40;        f12 = FONT_DSEG14_12;        break;
+        case 4:  f48 = FONT_DSEG7_48;         f40 = FONT_DSEG7_40;         f12 = FONT_DSEG7_12;         break;
+        case 5:  f48 = FONT_LCD_48;           f40 = FONT_LCD_40;           f12 = FONT_LCD_12;           break;
+        case 6:  f48 = FONT_SEGMENT7_48;      f40 = FONT_SEGMENT7_40;      f12 = FONT_SEGMENT7_12;      break;
+        case 7:  f48 = FONT_SHARETECHMONO_48; f40 = FONT_SHARETECHMONO_40; f12 = FONT_SHARETECHMONO_12; break;
+        default: f48 = &lv_font_montserrat_48;
+                 f40 = &lv_font_montserrat_40;
+                 f12 = &lv_font_montserrat_12; break;
+    }
+
+    lv_obj_set_style_text_font(lblSpeed,    f48, 0);
+    /* v1.0.17-NeoGPS CHANGE 3 — span style font replaces lv_obj label calls.
+       v1.0.35-NeoGPS CHANGE 1 — f36 → f40 for distance readouts. */
+    lv_style_set_text_font(lv_span_get_style(spanOdoNum), f40);
+    lv_style_set_text_font(lv_span_get_style(spanIntNum), f40);
+    lv_spangroup_refr_mode(spanOdo);
+    lv_spangroup_refr_mode(spanInt);
+    lv_obj_set_style_text_font(lblClockBig, f40, 0); /* v4.6.0: 48→36pt; v1.0.35: 36→40pt */
+    lv_obj_set_style_text_font(lblClock,    &lv_font_montserrat_14, 0);  /* v1.0.27-NeoGPS CHANGE 2 — locked montserrat_14; was f12 */
+}
+
+// =====================
+// ====== EVENTS ======
+// =====================
+// makeClrBtn — creates a CLR ODO/INT button with the press-transition style
+// attached. Called from buildMainUI() for btnClearOdo and btnClearInt.
+// The transition animates BG colour from the theme btn colour to its darkened
+// variant over 1800 ms ease-in while held, giving the same "loading" visual
+// that the old timer-based approach provided — without any per-tick timer.
+// The static lv_style_transition_dsc_t and prop array must be file-scope
+// (LVGL holds a pointer for the widget lifetime).
+// applyTheme() re-attaches clrBtnPressedStyle after updating the colour so
+// the transition start-colour always reflects the active theme.
+// v1.0.32-NeoGPS CHANGE 1 — initClrBtnStyle: transition removed; pressed BG = btn
+// colour (flat). Arc overlay is the sole progress signal during hold.
+static void initClrBtnStyle(uint32_t btnCol, uint32_t /*btnPrCol*/) {
+    if (!clrBtnStyleInit) {
+        lv_style_init(&clrBtnPressedStyle);
+        clrBtnStyleInit = true;
+    }
+    lv_style_set_bg_color(&clrBtnPressedStyle, lv_color_hex(btnCol));
+}
+
+// v1.0.32-NeoGPS CHANGE 1 — arc timer callbacks.
+// Each fires every 50 ms while the button is held. 40 ticks × 9° = 360° in 2000 ms.
+// Arc colour shifts from amber (0–74%) to red (75–100%) for a two-stage urgency signal.
+// Arc start angle fixed at 270° (12 o'clock); end angle advances clockwise.
+// v1.0.33-NeoGPS BUG FIX 2 — range widened to (0,630) in makeClrArc(); raw endAngle
+// passed directly with no subtraction. The prior wrap (endAngle > 360 ? endAngle-360 : endAngle)
+// caused the arc to jump backward to near 0° at tick 11 (369° → 9°).
+static void clrOdoArc_timer_cb(lv_timer_t *) {
+    if (!arcClearOdo) return;
+    clrOdoArcTick++;
+    int16_t endAngle = 270 + (int16_t)clrOdoArcTick * 9;
+    if (endAngle >= 630) endAngle = 630;  /* clamp at full 360° sweep */
+    lv_arc_set_end_angle(arcClearOdo, endAngle);
+    uint32_t col = (clrOdoArcTick >= 30) ? 0xCC2200 : 0xCC8800;
+    lv_obj_set_style_arc_color(arcClearOdo, lv_color_hex(col), LV_PART_INDICATOR);
+    lv_obj_clear_flag(arcClearOdo, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void clrIntArc_timer_cb(lv_timer_t *) {
+    if (!arcClearInt) return;
+    clrIntArcTick++;
+    int16_t endAngle = 270 + (int16_t)clrIntArcTick * 9;
+    if (endAngle >= 630) endAngle = 630;
+    lv_arc_set_end_angle(arcClearInt, endAngle);
+    uint32_t col = (clrIntArcTick >= 30) ? 0xCC2200 : 0xCC8800;
+    lv_obj_set_style_arc_color(arcClearInt, lv_color_hex(col), LV_PART_INDICATOR);
+    lv_obj_clear_flag(arcClearInt, LV_OBJ_FLAG_HIDDEN);
+}
+
+// v1.0.32-NeoGPS CHANGE 1 — press/release callbacks for arc start/reset.
+static void clrOdoPress_cb(lv_event_t *) {
+    if (!clrOdoArcTimer) return;
+    clrOdoArcTick = 0;
+    lv_arc_set_start_angle(arcClearOdo, 270);
+    lv_arc_set_end_angle(arcClearOdo,   270);
+    lv_obj_set_style_arc_color(arcClearOdo, lv_color_hex(0xCC8800), LV_PART_INDICATOR);
+    lv_obj_clear_flag(arcClearOdo, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_reset(clrOdoArcTimer);
+    lv_timer_resume(clrOdoArcTimer);
+}
+
+static void clrOdoRelease_cb(lv_event_t *) {
+    if (!clrOdoArcTimer) return;
+    lv_timer_pause(clrOdoArcTimer);
+    clrOdoArcTick = 0;
+    lv_arc_set_start_angle(arcClearOdo, 270);
+    lv_arc_set_end_angle(arcClearOdo,   270);
+    lv_obj_add_flag(arcClearOdo, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void clrIntPress_cb(lv_event_t *) {
+    if (!clrIntArcTimer) return;
+    clrIntArcTick = 0;
+    lv_arc_set_start_angle(arcClearInt, 270);
+    lv_arc_set_end_angle(arcClearInt,   270);
+    lv_obj_set_style_arc_color(arcClearInt, lv_color_hex(0xCC8800), LV_PART_INDICATOR);
+    lv_obj_clear_flag(arcClearInt, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_reset(clrIntArcTimer);
+    lv_timer_resume(clrIntArcTimer);
+}
+
+static void clrIntRelease_cb(lv_event_t *) {
+    if (!clrIntArcTimer) return;
+    lv_timer_pause(clrIntArcTimer);
+    clrIntArcTick = 0;
+    lv_arc_set_start_angle(arcClearInt, 270);
+    lv_arc_set_end_angle(arcClearInt,   270);
+    lv_obj_add_flag(arcClearInt, LV_OBJ_FLAG_HIDDEN);
+}
+
+// v1.0.32-NeoGPS CHANGE 1 — makeClrBtn: press/release event callbacks added.
+static lv_obj_t * makeClrBtn(lv_obj_t * parent,
+                               int32_t x, int32_t y,
+                               int32_t w, int32_t h,
+                               lv_event_cb_t cb) {
+    lv_obj_t * btn = makeBtn(parent, x, y, w, h, cb, LV_EVENT_LONG_PRESSED);
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_LONG_PRESSED_REPEAT, NULL);
+    lv_obj_add_style(btn, &clrBtnPressedStyle, LV_STATE_PRESSED);
+    return btn;
+}
+
+// v1.0.32-NeoGPS CHANGE 1 — makeClrArc: creates the arc overlay for a CLR button.
+// Positioned 4px outside the button on all sides (x−4, y−4, w+8, h+8).
+// Hidden at boot; shown/animated by press callbacks; arc is MODE_NORMAL (not interactive).
+// Range 0–360, start=end=270° (no sweep). Transparent bg. 4px white track, 4px indicator.
+// lv_timer created paused; resumed by press callback, paused+reset by release callback.
+static lv_obj_t * makeClrArc(lv_obj_t * parent,
+                               int32_t x, int32_t y,
+                               int32_t w, int32_t h) {
+    lv_obj_t * arc = lv_arc_create(parent);
+    lv_obj_set_size(arc, w + 8, h + 8);
+    lv_obj_set_pos(arc, x - 4, y - 4);
+    lv_arc_set_mode(arc, LV_ARC_MODE_NORMAL);
+    lv_arc_set_range(arc, 0, 630);  /* v1.0.33-NeoGPS BUG FIX 2 — widened from (0,360);
+                                        start=270, full sweep end=630 (270+360). Raw end
+                                        angles 270–630 passed without wrapping. */
+    lv_arc_set_start_angle(arc, 270);
+    lv_arc_set_end_angle(arc,   270);
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);          /* no knob handle */
+    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);          /* non-interactive */
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(arc, 0, 0);
+    /* background arc track — faint white to show the full ring outline */
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc,   LV_OPA_30,              LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 4,                       LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true,                  LV_PART_MAIN);
+    /* indicator arc — amber initially; shifts to red at 75% */
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0xCC8800), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(arc,   LV_OPA_COVER,           LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(arc, 4,                       LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true,                  LV_PART_INDICATOR);
+    lv_obj_add_flag(arc, LV_OBJ_FLAG_HIDDEN);               /* hidden until press */
+    return arc;
+}
+
+void clearOdo_cb(lv_event_t * e) {
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    rally.totalTrip = 0.0;
+    lastSavedOdo    = 0.0;  /* v4.9.6 BUG FIX 5: moved inside mutex — identical race to
+                                v4.9.1 BUG FIX 3 in confirm_freset_cb(). lastSavedOdo is a
+                                double (8 bytes, non-atomic on Xtensa LX6); writing it outside
+                                the mutex risked a torn read in gpsTask() on Core 0. */
+    rally.rejectedSteps    = 0;  /* v1.0.0-NeoGPS: reset with odo — session diagnostics */
+    rally.sanityRejections = 0;  /* v1.0.0-NeoGPS: reset with odo — session diagnostics */
+    rally.lastLocFalse     = 0;  /* v1.0.2-NeoGPS CHANGE 1 — reset blackout event counter with ODO */
+    rally.avgSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 — reset avg speed with total odo */
+    rally.maxSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 — reset max speed with total odo */
+    rally.avgSpeedStartMs      = 0;      /* v1.0.10-NeoGPS CHANGE 2 — re-arm timer on next first fix */
+    rally.avgSpeedTimerStarted = false;  /* v1.0.10-NeoGPS CHANGE 2 */
+    gpsHasFix = false;  /* v1.0.29-NeoGPS BUG FIX 3 — reset first-fix flag so gpsTask re-enters
+                           the !gpsHasFix block on next valid fix, re-anchoring avgSpeedStartMs to
+                           the post-clear epoch. gpsLastLoc intentionally not cleared — anchor is
+                           preserved to avoid a spurious accumulation pulse on the very next tick. */
+    xSemaphoreGive(dataMutex);
+    prefs.putDouble("odo", 0.0);
+}
+
+void clearInt_cb(lv_event_t * e) {
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    rally.intervalTrip = 0.0;
+    xSemaphoreGive(dataMutex);
+}
+
+// FRZ blink timer callback — fires every 500 ms while display is frozen.
+// Alternates btnFrz between red and the current theme btn colour.
+static void frz_blink_cb(lv_timer_t * tmr) {
+    frzBlinkState = !frzBlinkState;
+    if (frzBlinkState) {
+        lv_obj_set_style_bg_color(btnFrz, lv_color_hex(0xFF2200), 0);
+    } else {
+        // Restore to current theme btn colour
+        lv_obj_set_style_bg_color(btnFrz, lv_color_hex(THEMES[themeIdx].btn), 0);
+    }
+}
+
+// Helper — stops the blink timer and restores btnFrz to the theme colour.
+// Called from freeze_cb (unfreeze), ui_update (auto-expire), confirm_freset_cb.
+// v1.0.19-NeoGPS CHANGE 1: also clears LV_STATE_CHECKED so the checkable toggle
+// state stays in sync when the unfreeze is triggered programmatically (e.g. the
+// 60 s auto-expire path in ui_update) rather than by a user tap.
+static void stopFrzBlink() {
+    if (frzBlinkTimer) {
+        lv_timer_del(frzBlinkTimer);
+        frzBlinkTimer = nullptr;
+    }
+    frzBlinkState = false;
+    lv_obj_set_style_bg_color(btnFrz, lv_color_hex(THEMES[themeIdx].btn), 0);
+    lv_obj_clear_state(btnFrz, LV_STATE_CHECKED);   /* v1.0.19-NeoGPS CHANGE 1 */
+}
+
+// GPS fix LED blink callback — fires every 800 ms while GPS is acquiring.
+// Toggles ledGps between amber and muted grey. lv_led_off never called. (v1.0.15)
+// Period changed 500 → 800 ms; colour changed green → amber. (v1.0.24-NeoGPS CHANGE 4)
+static void gps_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 1 */
+    gpsBlinkState = !gpsBlinkState;
+    if (gpsBlinkState) {
+        lv_led_on(ledGps);
+        lv_led_set_color(ledGps, lv_color_hex(0x888899));
+    } else {
+        lv_led_on(ledGps);
+        lv_led_set_color(ledGps, lv_color_hex(0xCC8800));
+    }
+}
+
+// Helper — deletes the GPS blink timer and resets blink state.
+// After this call gpsBlinkTimer = nullptr, gpsBlinkPeriod = 0, gpsBlinkState = false.
+static void stopGpsBlink() {  /* v1.0.11-NeoGPS CHANGE 1 */
+    if (gpsBlinkTimer) {
+        lv_timer_del(gpsBlinkTimer);
+        gpsBlinkTimer = nullptr;
+    }
+    gpsBlinkState  = false;
+    gpsBlinkPeriod = 0;
+}
+
+// SATS LED blink callback — fires at satsBlinkPeriod ms.
+// Toggles ledSats between satsBlinkCol and muted grey. lv_led_off never called. (v1.0.15)
+// satsBlinkCol set by ui_update() before starting timer; supports both NA-red (v1.0.24)
+// and 2D-amber bands from the same callback. (v1.0.24-NeoGPS CHANGE 3)
+static void sats_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 2 */
+    satsBlinkState = !satsBlinkState;
+    if (satsBlinkState) {
+        lv_led_on(ledSats);
+        lv_led_set_color(ledSats, lv_color_hex(0x888899));
+    } else {
+        lv_led_on(ledSats);
+        lv_led_set_color(ledSats, lv_color_hex(satsBlinkCol));
+    }
+}
+
+// Helper — deletes the SATS blink timer and resets blink state.
+// After this call satsBlinkTimer = nullptr, satsBlinkPeriod = 0, satsBlinkState = false.
+static void stopSatsBlink() {  /* v1.0.11-NeoGPS CHANGE 2 */
+    if (satsBlinkTimer) {
+        lv_timer_del(satsBlinkTimer);
+        satsBlinkTimer = nullptr;
+    }
+    satsBlinkState  = false;
+    satsBlinkPeriod = 0;
+}
+
+// HDOP LED blink callback — fires at hdopBlinkPeriod ms while HDOP is amber or red.
+// Toggles ledHdop between semantic colour and muted grey. lv_led_off never called. (v1.0.15)
+// hdopBlinkCol holds the semantic colour for the current band, set by ui_update().
+static void hdop_blink_cb(lv_timer_t * tmr) {  /* v1.0.11-NeoGPS CHANGE 3 */
+    hdopBlinkState = !hdopBlinkState;
+    if (hdopBlinkState) {
+        lv_led_on(ledHdop);
+        lv_led_set_color(ledHdop, lv_color_hex(0x888899));
+    } else {
+        lv_led_on(ledHdop);
+        lv_led_set_color(ledHdop, lv_color_hex(hdopBlinkCol));
+    }
+}
+
+// Helper — deletes the HDOP blink timer and resets blink state.
+// After this call hdopBlinkTimer = nullptr, hdopBlinkPeriod = 0, hdopBlinkState = false.
+static void stopHdopBlink() {  /* v1.0.11-NeoGPS CHANGE 3 */
+    if (hdopBlinkTimer) {
+        lv_timer_del(hdopBlinkTimer);
+        hdopBlinkTimer = nullptr;
+    }
+    hdopBlinkState  = false;
+    hdopBlinkPeriod = 0;
+}
+
+void freeze_cb(lv_event_t * e) {
+    freezeDisplay = !freezeDisplay;
+    if (freezeDisplay) {
+        freezeStartMs = millis();
+        lv_label_set_text(lblFrz, LV_SYMBOL_PLAY " RES");
+        // Start blink — 500 ms period, repeating
+        frzBlinkState = false;
+        frzBlinkTimer = lv_timer_create(frz_blink_cb, 500, NULL);
+    } else {
+        lv_label_set_text(lblFrz, LV_SYMBOL_PAUSE " FRZ");
+        stopFrzBlink();
+    }
+}
+
+// --- Screen navigation ---
+void menu_cb(lv_event_t * e) {
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+void back_to_main_cb(lv_event_t * e) {
+    lv_screen_load_anim(scr_main, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+void open_gps_cb(lv_event_t * e) {
+    lv_screen_load_anim(scr_gps, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+void open_clock_cb(lv_event_t * e) {
+    pendingUtcOffset = utcOffset;   /* v1.0.23-NeoGPS CHANGE 2 — stage from committed value */
+    lv_screen_load_anim(scr_clock, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+void back_to_menu_cb(lv_event_t * e) {
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+static void picker_highlight_row(lv_obj_t * list, uint8_t selectedIdx) {
+    uint32_t rowBg = THEMES[themeIdx].bg;
+    uint32_t childCount = lv_obj_get_child_count(list);
+    for (uint32_t ci = 0; ci < childCount; ci++) {
+        lv_obj_t * child = lv_obj_get_child(list, (int32_t)ci);
+        uint32_t col = (ci == (uint32_t)selectedIdx)
+                       ? PICKER_ROW_SELECTED
+                       : rowBg;
+        lv_obj_set_style_bg_color(child, lv_color_hex(col), 0);
+    }
+}
+
+// Opens the theme picker screen; sets pendingThemeIdx to the current theme.
+void open_theme_cb(lv_event_t * e) {
+    pendingThemeIdx = themeIdx;
+    picker_highlight_row(themeList, pendingThemeIdx);   /* pre-highlight active theme */
+    lv_screen_load_anim(scr_theme, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Commits the pending theme: saves to NVS, applies to all screens, updates tile label.
+void confirm_theme_cb(lv_event_t * e) {
+    themeIdx = pendingThemeIdx;
+    prefs.putUChar("theme", themeIdx);
+    lv_label_set_text(lblThemeName, THEME_NAMES[themeIdx]);
+    applyTheme();
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Discards the pending selection and returns to the menu.
+void back_theme_cb(lv_event_t * e) {
+    pendingThemeIdx = themeIdx;  /* reset staged selection */
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Opens font picker screen; stages pendingFontIdx to current font.
+void open_font_cb(lv_event_t * e) {
+    pendingFontIdx = fontIdx;
+    picker_highlight_row(fontList, pendingFontIdx);     /* pre-highlight active font */
+    lv_screen_load_anim(scr_font, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Commits the pending font: saves to NVS, applies to all screens, updates tile label.
+void confirm_font_cb(lv_event_t * e) {
+    fontIdx = pendingFontIdx;
+    prefs.putUChar("font_idx", fontIdx);
+    lv_label_set_text(lblFontName, FONT_NAMES[fontIdx]);
+    applyFont();
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Discards the pending font selection and returns to the menu.
+void back_font_cb(lv_event_t * e) {
+    pendingFontIdx = fontIdx;
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Opens the factory reset confirmation screen.
+void open_freset_cb(lv_event_t * e) {
+    lv_label_set_text(lblFresetStatus, "");
+    lv_screen_load_anim(scr_freset, LV_SCR_LOAD_ANIM_MOVE_LEFT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Cancels factory reset and returns to menu.
+void cancel_freset_cb(lv_event_t * e) {
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// Executes factory reset: clears NVS, resets all runtime state, reapplies defaults,
+// shows "RESET COMPLETE" for 1 second then navigates to scr_main.
+void confirm_freset_cb(lv_event_t * e) {
+    // 1. Clear all NVS keys
+    prefs.clear();
+
+    // 2. Reset runtime values to factory defaults
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    rally.totalTrip    = 0.0;
+    rally.intervalTrip = 0.0;
+    lastSavedOdo       = 0.0;  /* v4.9.1 BUG FIX 3: moved inside mutex — lastSavedOdo is a
+                                    double (non-atomic on Xtensa LX6); writing it outside the
+                                    mutex risked a torn read in gpsTask() on Core 0. */
+    rally.rejectedSteps    = 0;  /* v1.0.0-NeoGPS: reset on factory reset */
+    rally.sanityRejections = 0;  /* v1.0.0-NeoGPS: reset on factory reset */
+    rally.lastLocFalse     = 0;  /* v1.0.2-NeoGPS CHANGE 1 — reset blackout event counter on factory reset */
+    rally.avgSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 */
+    rally.maxSpeed             = 0.0;    /* v1.0.10-NeoGPS CHANGE 2 */
+    rally.avgSpeedStartMs      = 0;      /* v1.0.10-NeoGPS CHANGE 2 */
+    rally.avgSpeedTimerStarted = false;  /* v1.0.10-NeoGPS CHANGE 2 */
+    gpsHasFix = false;  /* v1.0.29-NeoGPS BUG FIX 2 — reset first-fix flag so gpsTask re-enters
+                           the !gpsHasFix block on next valid fix, re-anchoring gpsLastLoc and
+                           avgSpeedStartMs from the post-reset epoch. */
+    xSemaphoreGive(dataMutex);
+
+    // Ensure freeze state and blink timer are cleared
+    if (freezeDisplay) {
+        freezeDisplay = false;
+        stopFrzBlink();
+        lv_label_set_text(lblFrz, LV_SYMBOL_PAUSE " FRZ");
+    }
+
+    /* v1.0.10-NeoGPS CHANGE 1 — reset speed view to current speed on factory reset */
+    speedViewIdx        = 0;
+    uiCacheSpeedViewIdx = -1;
+
+    themeIdx   = 0;
+    fontIdx    = 0;
+    blLevelIdx = BL_NUM_LEVELS - 1;  /* maximum brightness */
+    utcOffset  = UTC_OFFSET_DEFAULT;
+    pendingUtcOffset = UTC_OFFSET_DEFAULT;  /* v1.0.23-NeoGPS CHANGE 8 */
+
+    pendingThemeIdx = 0;
+    pendingFontIdx  = 0;
+
+    /* 100aw: calibration state variables removed — no reset needed here. */
+
+    // 3. Apply defaults to all screens immediately
+    applyBrightness();
+    applyTheme();
+    applyFont();
+
+    // 4. Update menu tile labels to reflect defaults
+    uint8_t pct = (uint8_t)((uint16_t)BL_LEVELS[blLevelIdx] * 100 / 255);
+    lv_label_set_text_fmt(lblBrightPct, "LVL\n%d%%", pct);
+    lv_label_set_text(lblThemeName, THEME_NAMES[themeIdx]);
+    lv_label_set_text(lblFontName,  FONT_NAMES[fontIdx]);
+
+    // 5. Show confirmation message
+    lv_label_set_text(lblFresetStatus, "RESET COMPLETE");
+
+    // 6. Navigate to scr_main after 1 second.
+    //    100aw: no calibration flow — go directly to main screen.
+    lv_timer_t * t = lv_timer_create([](lv_timer_t * tmr) {
+        lv_screen_load_anim(scr_main, LV_SCR_LOAD_ANIM_FADE_IN, UI_ANIM_FADE_MS, 0, false);
+        lv_timer_del(tmr);
+    }, 1000, NULL);
+    (void)t;
+}
+
+// --- Brightness cycle ---
+void brightness_cb(lv_event_t * e) {
+    blLevelIdx = (blLevelIdx + 1) % BL_NUM_LEVELS;
+    applyBrightness();
+    prefs.putUChar("brightness", BL_LEVELS[blLevelIdx]);
+    uint8_t pct = (uint8_t)((uint16_t)BL_LEVELS[blLevelIdx] * 100 / 255);
+    lv_label_set_text_fmt(lblBrightPct, "LVL\n%d%%", pct);
+}
+
+// --- UTC offset buttons (v1.0.23-NeoGPS CHANGE 3) ---
+// ± buttons now adjust pendingUtcOffset only.  utcOffset and NVS are not
+// touched until CONFIRM.  lblUtcOffset is refreshed directly here so the
+// display updates immediately; uiCacheUtcOff is invalidated to prevent
+// ui_update() from overwriting the pending display with the old committed value.
+void utc_minus_cb(lv_event_t * e) {
+    if (pendingUtcOffset > -14) {
+        pendingUtcOffset--;
+        uiCacheUtcOff = 0x7F;   /* invalidate cache — force lblUtcOffset refresh */
+        if (pendingUtcOffset >= 0) {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC+%d", pendingUtcOffset);
+        } else {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC%d",  pendingUtcOffset);
+        }
+    }
+}
+
+void utc_plus_cb(lv_event_t * e) {
+    if (pendingUtcOffset < 14) {
+        pendingUtcOffset++;
+        uiCacheUtcOff = 0x7F;   /* invalidate cache — force lblUtcOffset refresh */
+        if (pendingUtcOffset >= 0) {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC+%d", pendingUtcOffset);
+        } else {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC%d",  pendingUtcOffset);
+        }
+    }
+}
+
+// confirm_clock_cb — commits pendingUtcOffset → utcOffset, writes NVS,
+// invalidates the UTC and clock caches so ui_update() refreshes both
+// lblUtcOffset and lblClock on the very next tick after the transition.
+// v1.0.23-NeoGPS CHANGE 4.
+void confirm_clock_cb(lv_event_t * e) {
+    utcOffset = pendingUtcOffset;
+    prefs.putChar("utc_offset", utcOffset);
+    uiCacheUtcOff  = 0x7F;    /* force lblUtcOffset refresh via ui_update() */
+    uiCacheSecond  = 0xFF;    /* force lblClock refresh — utcOffset changed mid-second */
+    uiCacheTimeStr[0] = '\0'; /* clear time string cache to guarantee redraw */
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// back_clock_cb — discards pendingUtcOffset and returns to scr_menu without
+// writing NVS. Restores lblUtcOffset to the committed value immediately so the
+// stale pending value is not visible during the 150 ms slide-out animation.
+// v1.0.23-NeoGPS CHANGE 5.
+void back_clock_cb(lv_event_t * e) {
+    pendingUtcOffset = utcOffset;   /* discard staged changes */
+    /* Write committed value directly — do not wait for ui_update() tick, which
+       only fires after !onClockScreen and would show the stale pending value
+       for up to UI_ANIM_SLIDE_MS during the transition. */
+    if (utcOffset >= 0) {
+        lv_label_set_text_fmt(lblUtcOffset, "UTC+%d", utcOffset);
+    } else {
+        lv_label_set_text_fmt(lblUtcOffset, "UTC%d",  utcOffset);
+    }
+    uiCacheUtcOff = utcOffset;      /* cache now matches display — no redundant write */
+    lv_screen_load_anim(scr_menu, LV_SCR_LOAD_ANIM_MOVE_RIGHT, UI_ANIM_SLIDE_MS, 0, false);
+}
+
+// =====================
+// ====== HELPERS =====
+// =====================
+// makeBtn — creates a button and returns the button object (not the label).
+// Caller must create a label child separately.
+// Initial colours use Altura defaults; applyTheme() recolours on boot.
+static lv_obj_t * makeBtn(lv_obj_t * parent,
+                           int32_t x, int32_t y,
+                           int32_t w, int32_t h,
+                           lv_event_cb_t cb,
+                           lv_event_code_t ev) {
+    lv_obj_t * btn = lv_btn_create(parent);
+    lv_obj_set_size(btn, w, h);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x8A8A8A), 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x6E6E6E), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_add_event_cb(btn, cb, ev, NULL);
+    return btn;
+}
+
+// makeBtnLabel — adds a centred white label to a button created by makeBtn.
+static lv_obj_t * makeBtnLabel(lv_obj_t * btn) {
+    lv_obj_t * lbl = lv_label_create(btn);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(lbl);
+    return lbl;
+}
+
+// makeTile — creates a flex-column tile and returns the tile object.
+static lv_obj_t * makeTile(lv_obj_t * parent,
+                            int32_t x, int32_t y,
+                            int32_t w, int32_t h,
+                            lv_event_cb_t cb) {
+    lv_obj_t * tile = lv_btn_create(parent);
+    lv_obj_set_size(tile, w, h);
+    lv_obj_set_pos(tile, x, y);
+    lv_obj_set_style_bg_color(tile, lv_color_hex(0x2A3A7C), 0);
+    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(tile, lv_color_hex(0x1A2A6C), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(tile, 0, 0);
+    lv_obj_set_style_radius(tile, 10, 0);
+    lv_obj_add_event_cb(tile, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(tile, 4, 0);
+    return tile;
+}
+
+// =====================
+// ====== UI BUILD ====
+// =====================
+
+// --- Main screen ---
+void buildMainUI() {
+    scr_main = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_main, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_main, LV_OPA_COVER, 0);
+
+    /* v1.0.11-NeoGPS CHANGE 1 — GPS fix lv_led + static label.
+       Replaces lblSignal GPS line. "GPS:" at (6,8); ledGps 14×14 at (38,9).
+       Initial state: muted no-fix colour, led off.
+       v1.0.26-NeoGPS CHANGE 3 — y shifted down beneath new FRZ button:
+       lblGpsStatic y=8→44, ledGps/spinnerGps y=9→45. */
+    lblGpsStatic = lv_label_create(scr_main);
+    lv_label_set_text(lblGpsStatic, "GPS:");
+    lv_obj_set_pos(lblGpsStatic, 6, 44);
+    lv_obj_set_style_text_font(lblGpsStatic, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblGpsStatic, lv_color_hex(0x555577), 0);
+
+    ledGps = lv_led_create(scr_main);
+    lv_obj_set_size(ledGps, 14, 14);
+    lv_obj_set_pos(ledGps, 38, 45);
+    lv_obj_set_style_bg_opa(ledGps, LV_OPA_COVER, 0);          /* v1.0.12: fix bg_opa=TRANSP default */
+    lv_obj_set_style_radius(ledGps, LV_RADIUS_CIRCLE, 0);       /* v1.0.13: fix square default */
+    lv_led_on(ledGps);                                           /* always on; color encodes state */
+    lv_led_set_color(ledGps, lv_color_hex(0x888899));           /* boot: muted grey (no fix) */
+
+    /* v1.0.24-NeoGPS CHANGE 2 — GPS no-fix spinner.
+       Same position and size as ledGps (38,45 14×14). Hidden at boot; shown by
+       ui_update() in the no-fix branch while ledGps is hidden.
+       v1.0.26-NeoGPS CHANGE 3 — y=9→45 to match ledGps.
+       lv_conf.h: LV_USE_SPINNER must be 1. */
+    spinnerGps = lv_spinner_create(scr_main);
+    lv_obj_set_size(spinnerGps, 14, 14);
+    lv_obj_set_pos(spinnerGps, 38, 45);
+    lv_spinner_set_anim_params(spinnerGps, 1000, 60);
+    lv_obj_set_style_arc_color(spinnerGps, lv_color_hex(0xCC2200), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinnerGps, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(spinnerGps, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinnerGps, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(spinnerGps, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spinnerGps, 0, 0);
+    lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);             /* hidden until no-fix state */
+
+    /* v1.0.11-NeoGPS CHANGE 2 — SATS fix-type lv_led + static label.
+       Replaces lblSignal SATS line. "SAT:" at (6,62); ledSats 14×14 at (38,63).
+       Initial state: muted NA colour, led off.
+       v1.0.26-NeoGPS CHANGE 3 — y shifted down beneath new FRZ button:
+       lblSatsStatic y=26→62, text "SATS:"→"SAT:"; ledSats y=27→63, x=44→38
+       (aligns LED column with ledGps). */
+    lblSatsStatic = lv_label_create(scr_main);
+    lv_label_set_text(lblSatsStatic, "SAT:");
+    lv_obj_set_pos(lblSatsStatic, 6, 62);
+    lv_obj_set_style_text_font(lblSatsStatic, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblSatsStatic, lv_color_hex(0x555577), 0);
+
+    ledSats = lv_led_create(scr_main);
+    lv_obj_set_size(ledSats, 14, 14);
+    lv_obj_set_pos(ledSats, 38, 63);
+    lv_obj_set_style_bg_opa(ledSats, LV_OPA_COVER, 0);          /* v1.0.12: fix bg_opa=TRANSP default */
+    lv_obj_set_style_radius(ledSats, LV_RADIUS_CIRCLE, 0);       /* v1.0.13: fix square default */
+    lv_led_on(ledSats);                                           /* always on; color encodes state */
+    lv_led_set_color(ledSats, lv_color_hex(0x888899));           /* boot: muted grey (NA) */
+
+    // FRZ button: top-left, top bar — matches btnMenu size (100×36) at y=4.
+    // v1.0.19-NeoGPS CHANGE 1 — LV_OBJ_FLAG_CHECKABLE + LV_EVENT_VALUE_CHANGED.
+    // LVGL now tracks checked/unchecked state natively; freeze_cb logic unchanged.
+    // v1.0.26-NeoGPS CHANGE 1 — repositioned from (4,46,60×28) to (6,4,100×36).
+    btnFrz = makeBtn(scr_main, 6, 4, 100, 36, freeze_cb, LV_EVENT_VALUE_CHANGED);
+    lv_obj_add_flag(btnFrz, LV_OBJ_FLAG_CHECKABLE);
+    lblFrz = makeBtnLabel(btnFrz);
+    lv_label_set_text(lblFrz, LV_SYMBOL_PAUSE " FRZ");
+    lv_obj_set_style_text_font(lblFrz, &lv_font_montserrat_12, 0);
+
+    // Clock: centred in the gap between FRZ (right edge x=106) and MENU (left edge x=214).
+    // v1.0.26-NeoGPS CHANGE 2 — x=80→108, y=4→12, w=160→104.
+    // Gap = 108px; label w=104px (2px margin each side).
+    // v1.0.27-NeoGPS CHANGE 1 — h=20→16 (tightens bottom edge to y=28, reducing
+    // vertical overlap with speedCont at y=24). Font montserrat_12→14, locked to
+    // montserrat regardless of selected display font (see applyFont CHANGE 2).
+    // v1.0.34-NeoGPS CHANGE 2 — h=16→22, y=12→9: tinted pill container.
+    //   Pill vertically centres in 36px button row: y = 4 + (36-22)/2 = 11 → 9 (optical).
+    //   bg_color: theme fg at LV_OPA_15 — tracks applyTheme(). radius=11 (pill shape).
+    //   Revert: restore h=16, y=12; remove bg_color/bg_opa/radius/border/pad lines.
+    // v1.0.36-NeoGPS BUG FIX 1 — lv_label_set_long_mode(LV_LABEL_LONG_CLIP) added.
+    //   Root cause: lv_label in LVGL 9 defaults to LV_LABEL_LONG_SCROLL_CIRCULAR,
+    //   which collapses the rendered width to the text content width, causing
+    //   lv_obj_set_style_text_align CENTER to have no effect (nothing to centre
+    //   against). Setting CLIP locks the label to its declared 104px width so
+    //   the text centres correctly within the pill.
+    //   Revert: remove lv_label_set_long_mode line.
+    lblClock = lv_label_create(scr_main);
+    lv_label_set_text(lblClock, "HH:MM:SS");
+    lv_label_set_long_mode(lblClock, LV_LABEL_LONG_CLIP);              /* v1.0.36-NeoGPS BUG FIX 1 */
+    lv_obj_set_size(lblClock, 104, 22);
+    lv_obj_set_pos(lblClock, 108, 9);
+    lv_obj_set_style_text_font(lblClock, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lblClock, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblClock, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_bg_color(lblClock, lv_color_hex(0x1A2A6C), 0);  /* v1.0.34-NeoGPS CHANGE 2 */
+    lv_obj_set_style_bg_opa(lblClock, LV_OPA_10, 0);                  /* v1.0.34-NeoGPS CHANGE 2 */
+    lv_obj_set_style_radius(lblClock, 11, 0);                          /* v1.0.34-NeoGPS CHANGE 2 */
+    lv_obj_set_style_border_width(lblClock, 0, 0);                     /* v1.0.34-NeoGPS CHANGE 2 */
+    lv_obj_set_style_pad_top(lblClock,    3, 0);  /* v1.0.37-NeoGPS BUG FIX 1 — vertically centres montserrat_14 in 22px pill */
+    lv_obj_set_style_pad_bottom(lblClock, 0, 0);  /* v1.0.37-NeoGPS BUG FIX 1 */
+    lv_obj_set_style_pad_left(lblClock,   0, 0);  /* v1.0.37-NeoGPS BUG FIX 1 */
+    lv_obj_set_style_pad_right(lblClock,  0, 0);  /* v1.0.37-NeoGPS BUG FIX 1 */
+
+    // MENU button: top-right
+    btnMenu = makeBtn(scr_main, 214, 4, 100, 36, menu_cb);
+    lv_obj_t * lblMenu = makeBtnLabel(btnMenu);
+    lv_label_set_text(lblMenu, LV_SYMBOL_SETTINGS " MENU");
+    lv_obj_set_style_text_font(lblMenu, &lv_font_montserrat_14, 0);
+
+    // Speed container — file-scope; tap cycles spd/avg/max view (v1.0.10-NeoGPS CHANGE 1)
+    // v1.0.19-NeoGPS CHANGE 3 — converted from lv_obj_create to lv_btn_create so the
+    // tap target provides visible press feedback (translucent bg flash). Default state
+    // keeps LV_OPA_TRANSP so the container remains visually invisible; LV_STATE_PRESSED
+    // applies a brief LV_OPA_20 bg flash for tactile confirmation on the dashboard.
+    // The theme-colour pressed style is applied by applyTheme(). Tap logic unchanged.
+    speedCont = lv_btn_create(scr_main);
+    lv_obj_set_size(speedCont, 200, 64);
+    lv_obj_set_pos(speedCont, 60, 28);  /* v1.0.28-NeoGPS CHANGE 1 — y=24→28; lblSpeedUnit bottom lands at y=84 (divider top) */
+    lv_obj_set_style_bg_opa(speedCont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(speedCont, 0, 0);
+    lv_obj_set_style_pad_all(speedCont, 0, 0);
+    lv_obj_set_style_shadow_width(speedCont, 0, 0);  /* lv_btn default shadow — remove */
+    lv_obj_set_style_radius(speedCont, 0, 0);         /* lv_btn default radius — remove */
+    lv_obj_set_flex_flow(speedCont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(speedCont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER);
+
+    lblSpeed = lv_label_create(speedCont);
+    lv_label_set_text(lblSpeed, "0");
+    lv_obj_set_style_text_font(lblSpeed, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(lblSpeed, lv_color_hex(0x1A2A6C), 0);
+
+    lblSpeedUnit = lv_label_create(speedCont);
+    lv_label_set_text(lblSpeedUnit, "mph");
+    lv_obj_set_style_text_font(lblSpeedUnit, &lv_font_montserrat_14, 0);  /* v1.0.41-NeoGPS CHANGE 1 — 16→14pt */
+    lv_obj_set_style_text_color(lblSpeedUnit, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_pad_bottom(lblSpeedUnit, 8, 0);
+
+    // Tap handler — cycles speedViewIdx: 0=spd, 1=avg, 2=max (v1.0.10-NeoGPS CHANGE 1).
+    // Ignored while frozen. uiCacheSpeedViewIdx invalidated to force immediate label refresh.
+    lv_obj_add_event_cb(speedCont, [](lv_event_t *) {
+        if (!freezeDisplay) {
+            speedViewIdx = (speedViewIdx + 1) % 3;
+            uiCacheSpeedViewIdx = -1;
+        }
+    }, LV_EVENT_CLICKED, NULL);
+
+    // TOTAL header
+    // v1.0.35-NeoGPS CHANGE 1 — y=110→96, h=22→20 (reclaims space freed by divMain removal).
+    // v1.0.40-NeoGPS CHANGE 1 — y=96→106 (Option C: +10px gap between speedCont and odo zone).
+    lblOdoHdr = lv_label_create(scr_main);
+    lv_label_set_text(lblOdoHdr, "TOTAL");
+    lv_obj_set_pos(lblOdoHdr, 0, 106);
+    lv_obj_set_size(lblOdoHdr, 160, 20);
+    lv_obj_set_style_text_font(lblOdoHdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblOdoHdr, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblOdoHdr, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* v1.0.17-NeoGPS CHANGE 2 — TOTAL readout: lv_spangroup replaces odoCont flex container.
+       v1.0.35-NeoGPS CHANGE 1 — y=134→118, h=50→66; spanOdoUnit removed ("mi" dropped);
+       number font bumped 36pt→40pt via applyFont(). Same bottom edge (184) as before.
+       v1.0.40-NeoGPS CHANGE 1 — y=118→128, h=66→56 (Option C: odo zone pushed down 10px;
+       bottom edge stays at 184). Revert: restore y=118, h=66. */
+    spanOdo = lv_spangroup_create(scr_main);
+    lv_obj_set_size(spanOdo, 160, 56);
+    lv_obj_set_pos(spanOdo, 0, 128);
+    lv_spangroup_set_align(spanOdo, LV_TEXT_ALIGN_CENTER);
+    lv_spangroup_set_mode(spanOdo, LV_SPAN_MODE_FIXED);
+    lv_obj_set_style_bg_opa(spanOdo, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spanOdo, 0, 0);
+    lv_obj_set_style_pad_all(spanOdo, 0, 0);
+
+    spanOdoNum = lv_spangroup_new_span(spanOdo);
+    lv_span_set_text(spanOdoNum, "0.00");
+    lv_style_set_text_font(lv_span_get_style(spanOdoNum), &lv_font_montserrat_40);
+    lv_style_set_text_color(lv_span_get_style(spanOdoNum), lv_color_hex(0x1A2A6C));
+
+    lv_spangroup_refr_mode(spanOdo);
+
+    // TRIP header
+    // v1.0.35-NeoGPS CHANGE 1 — y=110→96, h=22→20 (matches TOTAL header).
+    // v1.0.40-NeoGPS CHANGE 1 — y=96→106 (matches TOTAL header).
+    lblIntHdr = lv_label_create(scr_main);
+    lv_label_set_text(lblIntHdr, "TRIP");
+    lv_obj_set_pos(lblIntHdr, 160, 106);
+    lv_obj_set_size(lblIntHdr, 160, 20);
+    lv_obj_set_style_text_font(lblIntHdr, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblIntHdr, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblIntHdr, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* v1.0.17-NeoGPS CHANGE 2 — TRIP readout: lv_spangroup replaces intCont flex container.
+       v1.0.35-NeoGPS CHANGE 1 — y=134→118, h=50→66; spanIntUnit removed ("mi" dropped);
+       number font bumped 36pt→40pt via applyFont(). Same bottom edge (184) as before.
+       v1.0.40-NeoGPS CHANGE 1 — y=118→128, h=66→56 (matches spanOdo). Revert: restore y=118, h=66. */
+    spanInt = lv_spangroup_create(scr_main);
+    lv_obj_set_size(spanInt, 160, 56);
+    lv_obj_set_pos(spanInt, 160, 128);
+    lv_spangroup_set_align(spanInt, LV_TEXT_ALIGN_CENTER);
+    lv_spangroup_set_mode(spanInt, LV_SPAN_MODE_FIXED);
+    lv_obj_set_style_bg_opa(spanInt, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spanInt, 0, 0);
+    lv_obj_set_style_pad_all(spanInt, 0, 0);
+
+    spanIntNum = lv_spangroup_new_span(spanInt);
+    lv_span_set_text(spanIntNum, "0.00");
+    lv_style_set_text_font(lv_span_get_style(spanIntNum), &lv_font_montserrat_40);
+    lv_style_set_text_color(lv_span_get_style(spanIntNum), lv_color_hex(0x1A2A6C));
+
+    lv_spangroup_refr_mode(spanInt);
+
+    // CLR ODO — long press clears total odometer.
+    // v1.0.19-NeoGPS CHANGE 2 — replaced custom 200 ms timer approach with a
+    // CSS-style lv_style_transition on LV_STATE_PRESSED (1800 ms ease-in colour
+    // animation). makeClrBtn() wraps makeBtn + LONG_PRESSED_REPEAT + style attach.
+    // initClrBtnStyle must be called before makeClrBtn; Altura default btn/pressed
+    // colours used here — applyTheme() will re-init with the restored NVS theme.
+    // v1.0.32-NeoGPS CHANGE 1 — transition replaced by arc overlay; see makeClrArc.
+    initClrBtnStyle(0x8A8A8A, 0x8A8A8A);
+    btnClearOdo = makeClrBtn(scr_main, 5, 186, 150, 50, clearOdo_cb);
+    lv_obj_add_event_cb(btnClearOdo, clrOdoPress_cb,   LV_EVENT_PRESSED,      NULL); /* v1.0.32 */
+    lv_obj_add_event_cb(btnClearOdo, clrOdoRelease_cb, LV_EVENT_RELEASED,     NULL); /* v1.0.32 */
+    lv_obj_add_event_cb(btnClearOdo, clrOdoRelease_cb, LV_EVENT_PRESS_LOST,   NULL); /* v1.0.32 */
+    lv_obj_t * lblCO = makeBtnLabel(btnClearOdo);
+    lv_label_set_text(lblCO, "CLR TOTAL");               /* v1.0.30-NeoGPS CHANGE 2 */
+    lv_obj_set_style_text_font(lblCO, &lv_font_montserrat_18, 0); /* v1.0.30-NeoGPS CHANGE 3 */
+
+    // CLR TRIP — long press clears interval trip.
+    // v1.0.32-NeoGPS CHANGE 1 — arc overlay added; see makeClrArc.
+    btnClearInt = makeClrBtn(scr_main, 165, 186, 150, 50, clearInt_cb);
+    lv_obj_add_event_cb(btnClearInt, clrIntPress_cb,   LV_EVENT_PRESSED,      NULL); /* v1.0.32 */
+    lv_obj_add_event_cb(btnClearInt, clrIntRelease_cb, LV_EVENT_RELEASED,     NULL); /* v1.0.32 */
+    lv_obj_add_event_cb(btnClearInt, clrIntRelease_cb, LV_EVENT_PRESS_LOST,   NULL); /* v1.0.32 */
+    lv_obj_t * lblCI = makeBtnLabel(btnClearInt);
+    lv_label_set_text(lblCI, "CLR TRIP");                /* v1.0.30-NeoGPS CHANGE 2 */
+    lv_obj_set_style_text_font(lblCI, &lv_font_montserrat_18, 0); /* v1.0.30-NeoGPS CHANGE 3 */
+
+    // v1.0.32-NeoGPS CHANGE 1 — arc overlays for CLR TOTAL and CLR TRIP.
+    // Positioned 4px outside button perimeter; hidden at boot; driven by timers.
+    arcClearOdo = makeClrArc(scr_main, 5, 186, 150, 50);
+    arcClearInt = makeClrArc(scr_main, 165, 186, 150, 50);
+
+    // Timers created paused; resumed on LV_EVENT_PRESSED, paused on LV_EVENT_RELEASED.
+    // Period 50 ms; 40 ticks × 9° = 360° sweep over 2000 ms (= long_press_time).
+    clrOdoArcTimer = lv_timer_create(clrOdoArc_timer_cb, 50, NULL);
+    lv_timer_pause(clrOdoArcTimer);
+    clrIntArcTimer = lv_timer_create(clrIntArc_timer_cb, 50, NULL);
+    lv_timer_pause(clrIntArcTimer);
+
+    /* v1.0.11-NeoGPS CHANGE 3 — HDOP lv_led + static label.
+       MENU button: x=214, w=100, center=264.
+       "HDOP:" renders ~44px at montserrat_12. Group = 44+4+14 = 62px.
+       Group x = 264 - 62/2 = 233. LED x = 233 + 44 + 4 = 281.
+       v1.0.14: x adjusted (label 238→233, LED 276→281) to clear text overlap. */
+    lblHdopStatic = lv_label_create(scr_main);
+    lv_label_set_text(lblHdopStatic, "HDOP:");
+    lv_obj_set_pos(lblHdopStatic, 233, 46);
+    lv_obj_set_style_text_font(lblHdopStatic, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblHdopStatic, lv_color_hex(0x555577), 0);
+
+    ledHdop = lv_led_create(scr_main);
+    lv_obj_set_size(ledHdop, 14, 14);
+    lv_obj_set_pos(ledHdop, 281, 45);
+    lv_obj_set_style_bg_opa(ledHdop, LV_OPA_COVER, 0);          /* v1.0.12: fix bg_opa=TRANSP default */
+    lv_obj_set_style_radius(ledHdop, LV_RADIUS_CIRCLE, 0);       /* v1.0.13: fix square default */
+    lv_led_on(ledHdop);                                           /* always on; color encodes state */
+    lv_led_set_color(ledHdop, lv_color_hex(0x888899));           /* boot: muted grey (no fix) */
+
+    /* v1.0.24-NeoGPS CHANGE 2 — HDOP no-fix spinner.
+       Same position and size as ledHdop (281,45 14×14). Hidden at boot; shown by
+       ui_update() when h >= 99.0 while ledHdop is hidden.
+       lv_conf.h: LV_USE_SPINNER must be 1. */
+    spinnerHdop = lv_spinner_create(scr_main);
+    lv_obj_set_size(spinnerHdop, 14, 14);
+    lv_obj_set_pos(spinnerHdop, 281, 45);
+    lv_spinner_set_anim_params(spinnerHdop, 1000, 60);
+    lv_obj_set_style_arc_color(spinnerHdop, lv_color_hex(0xCC2200), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(spinnerHdop, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_opa(spinnerHdop, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spinnerHdop, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(spinnerHdop, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(spinnerHdop, 0, 0);
+    lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);             /* hidden until no-fix state */
+}
+
+// --- Menu screen ---
+// 3×2 tile grid: [BRIGHT] [GPS] [CLOCK] / [THEME] [FONT] [--spare--]
+// Tile size: 88×80 px. H gap: 8 px. Total: 3×88+2×8 = 280 px → left margin 20 px.
+// V gap: 10 px. Row 1 y=51, Row 2 y=51+80+10=141. Version label y=230.
+void buildMenuUI() {
+    scr_menu = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_menu, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_menu, LV_OPA_COVER, 0);
+
+    lblMenuTitle = lv_label_create(scr_menu);
+    lv_label_set_text(lblMenuTitle, "MENU");
+    lv_obj_set_pos(lblMenuTitle, 10, 12);
+    lv_obj_set_style_text_font(lblMenuTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblMenuTitle, lv_color_hex(0x1A2A6C), 0);
+
+    lblMenuVersion = lv_label_create(scr_menu);
+    lv_label_set_text(lblMenuVersion, "Altura " FIRMWARE_VERSION);
+    lv_obj_set_size(lblMenuVersion, 200, 16);
+    lv_obj_set_pos(lblMenuVersion, 60, 224);
+    lv_obj_set_style_text_font(lblMenuVersion, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblMenuVersion, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblMenuVersion, LV_TEXT_ALIGN_CENTER, 0);
+
+    btnMenuBack = makeBtn(scr_menu, 214, 4, 100, 36, back_to_main_cb);
+    lv_obj_t * lblBack = makeBtnLabel(btnMenuBack);
+    lv_label_set_text(lblBack, LV_SYMBOL_NEW_LINE " BACK");
+    lv_obj_set_style_text_font(lblBack, &lv_font_montserrat_14, 0);
+
+    divMenu = lv_obj_create(scr_menu);
+    lv_obj_set_size(divMenu, 320, 2);
+    lv_obj_set_pos(divMenu, 0, 46);
+    lv_obj_set_style_bg_color(divMenu, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divMenu, 0, 0);
+    lv_obj_set_style_pad_all(divMenu, 0, 0);
+
+    const int32_t TW   = 88;   /* tile width */
+    const int32_t TH   = 80;   /* tile height */
+    const int32_t HGAP = 8;
+    const int32_t VGAP = 10;
+    const int32_t X0   = 20;
+    const int32_t X1   = X0 + TW + HGAP;
+    const int32_t X2   = X1 + TW + HGAP;
+    const int32_t Y0   = 51;
+    const int32_t Y1   = Y0 + TH + VGAP;
+
+    // Row 1: BRIGHT | GPS | CLOCK
+    // Brightness tile
+    tileBright = makeTile(scr_menu, X0, Y0, TW, TH, brightness_cb);
+    iconBright = lv_label_create(tileBright);
+    lv_label_set_text(iconBright, FA_CIRCLE_HALF_SYMBOL);        /* v1.0.31-NeoGPS CHANGE 1 — FA circle-half U+F042 */
+    lv_obj_set_style_text_font(iconBright, &fa_circle_half_36, 0); /* v1.0.31-NeoGPS CHANGE 1 */
+    lv_obj_set_style_text_color(iconBright, lv_color_hex(0xFFFFFF), 0);
+    lblBrightPct = lv_label_create(tileBright);
+    uint8_t initPct = (uint8_t)((uint16_t)BL_LEVELS[blLevelIdx] * 100 / 255);
+    lv_label_set_text_fmt(lblBrightPct, "LVL\n%d%%", initPct);
+    lv_obj_set_style_text_font(lblBrightPct, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblBrightPct, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_align(lblBrightPct, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lblBrightPct, TW);
+    capBright = NULL;  /* brightness tile has no separate caption label */
+
+    // GPS tile
+    tileGpsMenu = makeTile(scr_menu, X1, Y0, TW, TH, open_gps_cb);
+    iconGps = lv_label_create(tileGpsMenu);
+    lv_label_set_text(iconGps, LV_SYMBOL_GPS);
+    lv_obj_set_style_text_font(iconGps, &lv_font_montserrat_36, 0);
+    lv_obj_set_style_text_color(iconGps, lv_color_hex(0xFFFFFF), 0);
+    capGps = lv_label_create(tileGpsMenu);
+    lv_label_set_text(capGps, "GPS");
+    lv_obj_set_style_text_font(capGps, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(capGps, lv_color_hex(0xFFFFFF), 0);
+
+    // Clock tile
+    tileClock = makeTile(scr_menu, X2, Y0, TW, TH, open_clock_cb);
+    iconClk = lv_label_create(tileClock);
+    lv_label_set_text(iconClk, FA_CLOCK_SYMBOL);        /* v1.0.30-NeoGPS CHANGE 1 — FA clock U+F017 */
+    lv_obj_set_style_text_font(iconClk, &fa_clock_36, 0); /* v1.0.30-NeoGPS CHANGE 1 */
+    lv_obj_set_style_text_color(iconClk, lv_color_hex(0xFFFFFF), 0);
+    capClk = lv_label_create(tileClock);
+    lv_label_set_text(capClk, "CLOCK");
+    lv_obj_set_style_text_font(capClk, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(capClk, lv_color_hex(0xFFFFFF), 0);
+
+    // Row 2: THEME | FONT | F RESET
+    // Theme tile — opens theme picker screen
+    tileTheme = makeTile(scr_menu, X0, Y1, TW, TH, open_theme_cb);
+    iconTheme = lv_label_create(tileTheme);
+    lv_label_set_text(iconTheme, LV_SYMBOL_EYE_OPEN);
+    lv_obj_set_style_text_font(iconTheme, &lv_font_montserrat_36, 0);
+    lv_obj_set_style_text_color(iconTheme, lv_color_hex(0xFFFFFF), 0);
+    capTheme = lv_label_create(tileTheme);
+    lv_label_set_text(capTheme, "THEME");
+    lv_obj_set_style_text_font(capTheme, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(capTheme, lv_color_hex(0xFFFFFF), 0);
+    lblThemeName = lv_label_create(tileTheme);
+    lv_label_set_text(lblThemeName, THEME_NAMES[themeIdx]);
+    lv_obj_set_style_text_font(lblThemeName, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblThemeName, lv_color_hex(0xFFFFFF), 0);
+
+    // Font tile
+    tileFont = makeTile(scr_menu, X1, Y1, TW, TH, open_font_cb);
+    iconFont = lv_label_create(tileFont);
+    lv_label_set_text(iconFont, FA_FONT_SYMBOL);        /* v1.0.31-NeoGPS CHANGE 1 — FA font U+F031 */
+    lv_obj_set_style_text_font(iconFont, &fa_font_36, 0); /* v1.0.31-NeoGPS CHANGE 1 */
+    lv_obj_set_style_text_color(iconFont, lv_color_hex(0xFFFFFF), 0);
+    capFont = lv_label_create(tileFont);
+    lv_label_set_text(capFont, "FONT");
+    lv_obj_set_style_text_font(capFont, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(capFont, lv_color_hex(0xFFFFFF), 0);
+    lblFontName = lv_label_create(tileFont);
+    lv_label_set_text(lblFontName, FONT_NAMES[fontIdx]);
+    lv_obj_set_style_text_font(lblFontName, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lblFontName, lv_color_hex(0xFFFFFF), 0);
+
+    // Factory reset tile — dark red, always; signals danger independent of theme
+    tileFreset = lv_btn_create(scr_menu);
+    lv_obj_set_size(tileFreset, TW, TH);
+    lv_obj_set_pos(tileFreset, X2, Y1);
+    lv_obj_set_style_bg_color(tileFreset, lv_color_hex(0x8B0000), 0);
+    lv_obj_set_style_bg_opa(tileFreset, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(tileFreset, lv_color_hex(0x5A0000), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(tileFreset, 0, 0);
+    lv_obj_set_style_radius(tileFreset, 10, 0);
+    lv_obj_add_event_cb(tileFreset, open_freset_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_flex_flow(tileFreset, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(tileFreset, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(tileFreset, 4, 0);
+
+    iconFreset = lv_label_create(tileFreset);
+    lv_label_set_text(iconFreset, LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_font(iconFreset, &lv_font_montserrat_36, 0);
+    lv_obj_set_style_text_color(iconFreset, lv_color_hex(0xFFFFFF), 0);
+    capFreset = lv_label_create(tileFreset);
+    lv_label_set_text(capFreset, "F RESET");
+    lv_obj_set_style_text_font(capFreset, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(capFreset, lv_color_hex(0xFFFFFF), 0);
+}
+
+/* Forward declaration — defined after buildGpsUI().
+   Required because PlatformIO compiles as C++ with strict forward-declaration
+   rules, unlike the Arduino IDE which pre-scans function signatures. */
+static void applyScrollbarStyle(lv_obj_t * list);  /* v4.9.5: used in buildGpsUI() */
+
+// ── GPS table user_data packing (v1.0.21-NeoGPS CHANGE 1) ──────────────────
+// gpsTable user_data encodes three independent 2-bit band fields in one word:
+//   bits 0–1  HDOP band:    0=no-fix/green (no highlight), 1=amber, 2=red
+//   bits 2–3  REJ STP band: 0=none, 1=amber (≥1), 2=red (≥5)
+//   bits 4–5  REJ SAN band: 0=none, 1=amber (≥1), 2=red (≥5)
+// ui_update() packs all three into a single GPS_UD_PACK call each tick.
+// gps_table_draw_cb unpacks the relevant field per row via GPS_UD_GET.
+#define GPS_UD_BAND_MASK  0x3u
+#define GPS_UD_HDOP_SHIFT 0u
+#define GPS_UD_REJ_SHIFT  2u
+#define GPS_UD_SAN_SHIFT  4u
+#define GPS_UD_PACK(hdop, rej, san) \
+    (((uint32_t)(hdop) & GPS_UD_BAND_MASK)        | \
+     (((uint32_t)(rej) & GPS_UD_BAND_MASK) << GPS_UD_REJ_SHIFT) | \
+     (((uint32_t)(san) & GPS_UD_BAND_MASK) << GPS_UD_SAN_SHIFT))
+#define GPS_UD_GET(word, shift) \
+    (((uint32_t)(uintptr_t)(word) >> (shift)) & GPS_UD_BAND_MASK)
+
+// gps_table_draw_cb — LV_EVENT_DRAW_TASK_ADDED callback on gpsTable.
+// Intercepts fill draw tasks for GPS_ROW_HDOP, GPS_ROW_REJSTP, GPS_ROW_REJSAN
+// and overrides the row background colour based on band fields packed in
+// user_data by ui_update() each 100 ms tick.
+//
+// Colour scheme (shared across all three rows):
+//   band 1 (amber): 0xCC8800 at LV_OPA_30 — noteworthy, not critical
+//   band 2 (red):   0xCC2200 at LV_OPA_40 — action warranted
+//   band 0 (none):  no override (theme bg shows through)
+//
+// v1.0.21-NeoGPS CHANGE 2.
+static void gps_table_draw_cb(lv_event_t * e) {
+    lv_obj_t       * obj       = (lv_obj_t *)lv_event_get_target(e);
+    lv_draw_task_t * draw_task = lv_event_get_draw_task(e);
+    lv_draw_dsc_base_t * base  = (lv_draw_dsc_base_t *)lv_draw_task_get_draw_dsc(draw_task);
+
+    if (base->part != LV_PART_ITEMS) return;
+
+    uint32_t row  = base->id1;
+    void   * ud   = lv_obj_get_user_data(obj);
+    uint32_t band = 0;
+
+    switch (row) {
+        case GPS_ROW_HDOP:
+            band = GPS_UD_GET(ud, GPS_UD_HDOP_SHIFT);
+            break;
+        case GPS_ROW_REJSTP:
+            band = GPS_UD_GET(ud, GPS_UD_REJ_SHIFT);
+            break;
+        case GPS_ROW_REJSAN:
+            band = GPS_UD_GET(ud, GPS_UD_SAN_SHIFT);
+            break;
+        default:
+            return;  /* all other rows — no highlight */
+    }
+
+    if (band == 0) return;  /* no highlight for this row this tick */
+
+    lv_color_t hilite_col = (band == 1) ? lv_color_hex(0xCC8800)
+                                         : lv_color_hex(0xCC2200);
+    lv_opa_t   hilite_opa = (band == 1) ? LV_OPA_30 : LV_OPA_40;
+
+    lv_draw_fill_dsc_t * fill = lv_draw_task_get_fill_dsc(draw_task);
+    if (fill) {
+        fill->color = hilite_col;
+        fill->opa   = hilite_opa;
+    }
+}
+
+// --- GPS child screen ---
+// v1.0.20-NeoGPS: replaced gpsScrollList flex container + 9 row/label pairs with
+// a single lv_table (gpsTable). Two columns: col-0 = field name, col-1 = value.
+// Self-layouts rows; trivially extensible. HDOP row is colour-coded via draw event.
+// lv_conf.h: LV_USE_TABLE must be 1.
+void buildGpsUI() {
+    scr_gps = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_gps, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_gps, LV_OPA_COVER, 0);
+
+    /* Title — anchored left */
+    lblGpsTitle = lv_label_create(scr_gps);
+    lv_label_set_text(lblGpsTitle, "GPS DETAILS");
+    lv_obj_set_pos(lblGpsTitle, 10, 12);
+    lv_obj_set_style_text_font(lblGpsTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblGpsTitle, lv_color_hex(0x1A2A6C), 0);
+
+    /* BACK — header bar, anchored right */
+    btnGpsBack = makeBtn(scr_gps, 214, 4, 100, 36, back_to_menu_cb);
+    lv_obj_t * lblBack = makeBtnLabel(btnGpsBack);
+    lv_label_set_text(lblBack, LV_SYMBOL_NEW_LINE " BACK");
+    lv_obj_set_style_text_font(lblBack, &lv_font_montserrat_14, 0);
+
+    divGps = lv_obj_create(scr_gps);
+    lv_obj_set_size(divGps, 320, 2);
+    lv_obj_set_pos(divGps, 0, 46);
+    lv_obj_set_style_bg_color(divGps, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divGps, 0, 0);
+    lv_obj_set_style_pad_all(divGps, 0, 0);
+
+    /* lv_table — 2 columns, GPS_NUM_ROWS rows.
+       Positioned at y=50, sized 320×190 to match the former gpsScrollList geometry.
+       Horizontal scroll disabled — lv_table enables it by default.
+       Vertical scroll only: content height (9 rows × ~26px = 234px) exceeds
+       the 190px viewport, scrollbar activates automatically. */
+    gpsTable = lv_table_create(scr_gps);
+    lv_obj_set_size(gpsTable, 320, 190);
+    lv_obj_set_pos(gpsTable, 0, 50);
+    lv_obj_set_scroll_dir(gpsTable, LV_DIR_VER);   /* vertical scroll only */
+
+    /* Column widths must account for per-cell pad_left (8) + pad_right (4) = 12px
+       overhead per column. Total available: 320px.
+       col-0 content: 100px + 12px overhead = 112px.
+       col-1 content: 196px + 12px overhead = 208px.
+       Total: 320px exactly — no horizontal overflow. */
+    lv_table_set_column_count(gpsTable, 2);
+    lv_table_set_column_width(gpsTable, 0, 100);
+    lv_table_set_column_width(gpsTable, 1, 196);
+
+    /* Table background — no border, transparent between cells */
+    lv_obj_set_style_bg_color(gpsTable,     lv_color_hex(0xDDDDE8), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(gpsTable,       LV_OPA_COVER,           LV_PART_MAIN);
+    lv_obj_set_style_border_width(gpsTable, 0,                       LV_PART_MAIN);
+    lv_obj_set_style_pad_all(gpsTable,      0,                       LV_PART_MAIN);
+
+    /* Cell style — montserrat_14, theme fg colour, no cell borders, row height 26 px */
+    lv_obj_set_style_text_font(gpsTable,    &lv_font_montserrat_14, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(gpsTable,   lv_color_hex(0x1A2A6C), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(gpsTable,     lv_color_hex(0xDDDDE8), LV_PART_ITEMS);
+    lv_obj_set_style_bg_opa(gpsTable,       LV_OPA_COVER,           LV_PART_ITEMS);
+    lv_obj_set_style_border_width(gpsTable, 0,                       LV_PART_ITEMS);
+    lv_obj_set_style_pad_top(gpsTable,      4,                       LV_PART_ITEMS);
+    lv_obj_set_style_pad_bottom(gpsTable,   4,                       LV_PART_ITEMS);
+    lv_obj_set_style_pad_left(gpsTable,     8,                       LV_PART_ITEMS);
+    lv_obj_set_style_pad_right(gpsTable,    4,                       LV_PART_ITEMS);
+
+    /* Scrollbar — reuse shared style */
+    applyScrollbarStyle(gpsTable);
+
+    /* Populate column-0 header strings (static — never change) */
+    static const char * const GPS_HEADERS[GPS_NUM_ROWS] = {
+        "LAT:", "LONG:", "ALT:", "HDOP:", "FIX:", "SATS USD:",
+        "REJ STP:", "REJ SAN:", "LLF:"
+    };
+    for (uint32_t r = 0; r < GPS_NUM_ROWS; r++) {
+        lv_table_set_cell_value(gpsTable, r, 0, GPS_HEADERS[r]);
+        lv_table_set_cell_value(gpsTable, r, 1, "---");
+    }
+
+    /* user_data encodes the current HDOP band index (0-3) for the draw callback.
+       0 = no fix, 1 = green, 2 = amber, 3 = red. Initialised to 0 (no fix). */
+    lv_obj_set_user_data(gpsTable, (void *)(uintptr_t)0u);
+
+    /* Draw event — colours the HDOP row based on band index in user_data */
+    lv_obj_add_event_cb(gpsTable, gps_table_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_obj_add_flag(gpsTable, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+}
+
+// --- Clock child screen ---
+// Shows HH:MM:SS (UTC-adjusted), UTC offset, and – / + buttons.
+void buildClockUI() {
+    scr_clock = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_clock, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_clock, LV_OPA_COVER, 0);
+
+    lblClockTitle = lv_label_create(scr_clock);
+    lv_label_set_text(lblClockTitle, "CLOCK");
+    lv_obj_set_pos(lblClockTitle, 10, 12);
+    lv_obj_set_style_text_font(lblClockTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblClockTitle, lv_color_hex(0x1A2A6C), 0);
+
+    // v1.0.23-NeoGPS CHANGE 3 — CONFIRM button added to header bar.
+    // Position (108, 4, 102×36) matches btnThemeConfirm and btnFontConfirm exactly.
+    // btnClockBack position (214, 4) unchanged.
+    btnClockConfirm = makeBtn(scr_clock, 108, 4, 102, 36, confirm_clock_cb);
+    lv_obj_t * lblConf = makeBtnLabel(btnClockConfirm);
+    lv_label_set_text(lblConf, LV_SYMBOL_OK " CONFIRM");
+    lv_obj_set_style_text_font(lblConf, &lv_font_montserrat_12, 0);
+
+    btnClockBack = makeBtn(scr_clock, 214, 4, 100, 36, back_clock_cb);  /* v1.0.23-NeoGPS CHANGE 6 */
+    lv_obj_t * lblBack = makeBtnLabel(btnClockBack);
+    lv_label_set_text(lblBack, LV_SYMBOL_NEW_LINE " BACK");
+    lv_obj_set_style_text_font(lblBack, &lv_font_montserrat_14, 0);
+
+    divClock = lv_obj_create(scr_clock);
+    lv_obj_set_size(divClock, 320, 2);
+    lv_obj_set_pos(divClock, 0, 46);
+    lv_obj_set_style_bg_color(divClock, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divClock, 0, 0);
+    lv_obj_set_style_pad_all(divClock, 0, 0);
+
+    lblClockBig = lv_label_create(scr_clock);
+    lv_label_set_text(lblClockBig, "HH:MM:SS");
+    lv_obj_set_size(lblClockBig, 320, 60);
+    lv_obj_set_pos(lblClockBig, 0, 68);
+    lv_obj_set_style_text_font(lblClockBig, &lv_font_montserrat_36, 0); /* v4.6.0: 48→36pt — segment fonts overran at 48pt */
+    lv_obj_set_style_text_color(lblClockBig, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblClockBig, LV_TEXT_ALIGN_CENTER, 0);
+
+    lblUtcOffset = lv_label_create(scr_clock);
+    lv_label_set_text(lblUtcOffset, "UTC-5");
+    lv_obj_set_size(lblUtcOffset, 320, 28);
+    lv_obj_set_pos(lblUtcOffset, 0, 140);
+    lv_obj_set_style_text_font(lblUtcOffset, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblUtcOffset, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblUtcOffset, LV_TEXT_ALIGN_CENTER, 0);
+
+    btnUtcMinus = makeBtn(scr_clock, 60, 180, 80, 44, utc_minus_cb);
+    /* v1.0.19-NeoGPS CHANGE 5 — hold-to-repeat for fast UTC offset adjustment. */
+    lv_obj_add_event_cb(btnUtcMinus, utc_minus_cb, LV_EVENT_LONG_PRESSED_REPEAT, NULL);
+    lv_obj_t * lblMinus = makeBtnLabel(btnUtcMinus);
+    lv_label_set_text(lblMinus, LV_SYMBOL_MINUS);
+    lv_obj_set_style_text_font(lblMinus, &lv_font_montserrat_36, 0);
+
+    btnUtcPlus = makeBtn(scr_clock, 180, 180, 80, 44, utc_plus_cb);
+    /* v1.0.19-NeoGPS CHANGE 5 — hold-to-repeat for fast UTC offset adjustment. */
+    lv_obj_add_event_cb(btnUtcPlus, utc_plus_cb, LV_EVENT_LONG_PRESSED_REPEAT, NULL);
+    lv_obj_t * lblPlus = makeBtnLabel(btnUtcPlus);
+    lv_label_set_text(lblPlus, LV_SYMBOL_PLUS);
+    lv_obj_set_style_text_font(lblPlus, &lv_font_montserrat_36, 0);
+}
+
+// --- Theme picker child screen ---
+// applyScrollbarStyle — applies shared scrollbar style to a scrollable list.
+// Called by buildThemeUI() and buildFontUI(). Initialised once on first call.
+// 4px navy scrollbar, always visible, theme-neutral across all 17 themes.
+static void applyScrollbarStyle(lv_obj_t * list) {
+    if (!scrollbarStyleInit) {
+        lv_style_init(&scrollbarStyle);
+        lv_style_set_width(&scrollbarStyle,      4);
+        lv_style_set_pad_right(&scrollbarStyle,  2);
+        lv_style_set_pad_top(&scrollbarStyle,    4);
+        lv_style_set_pad_bottom(&scrollbarStyle, 4);
+        lv_style_set_radius(&scrollbarStyle,     2);
+        lv_style_set_bg_opa(&scrollbarStyle,     LV_OPA_50);
+        lv_style_set_bg_color(&scrollbarStyle,   lv_color_hex(0x1A2A6C));
+        lv_style_set_border_width(&scrollbarStyle, 0);
+        scrollbarStyleInit = true;
+    }
+    lv_obj_remove_style(list, NULL, LV_PART_SCROLLBAR | LV_STATE_ANY);
+    lv_obj_add_style(list, &scrollbarStyle, LV_PART_SCROLLBAR);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ON);
+}
+
+// Scrollable container of all 17 themes.  Each row is an lv_btn with a 20×20
+// colour swatch and the theme name label.  Tapping a row stages pendingThemeIdx.
+// CONFIRM commits and returns to scr_menu.  BACK discards and returns to scr_menu.
+// Uses plain lv_obj scroll container — no LV_USE_LIST dependency.
+void buildThemeUI() {
+    scr_theme = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_theme, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_theme, LV_OPA_COVER, 0);
+
+    // Title
+    lblThemeTitle = lv_label_create(scr_theme);
+    lv_label_set_text(lblThemeTitle, "THEME");
+    lv_obj_set_pos(lblThemeTitle, 10, 12);
+    lv_obj_set_style_text_font(lblThemeTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblThemeTitle, lv_color_hex(0x1A2A6C), 0);
+
+    // CONFIRM button — header bar, between title and BACK (v4.6.0)
+    // Moved from bottom (y=234, off-screen) to header bar to match
+    // the RECALIB GPS pattern on scr_gps.
+    btnThemeConfirm = makeBtn(scr_theme, 108, 4, 102, 36, confirm_theme_cb);
+    lv_obj_t * lblConf = makeBtnLabel(btnThemeConfirm);
+    lv_label_set_text(lblConf, LV_SYMBOL_OK " CONFIRM");
+    lv_obj_set_style_text_font(lblConf, &lv_font_montserrat_12, 0);
+
+    // BACK button — top-right, unchanged
+    btnThemeBack = makeBtn(scr_theme, 214, 4, 100, 36, back_theme_cb);
+    lv_obj_t * lblTBack = makeBtnLabel(btnThemeBack);
+    lv_label_set_text(lblTBack, LV_SYMBOL_NEW_LINE " BACK");
+    lv_obj_set_style_text_font(lblTBack, &lv_font_montserrat_14, 0);
+
+    // Divider
+    divTheme = lv_obj_create(scr_theme);
+    lv_obj_set_size(divTheme, 320, 2);
+    lv_obj_set_pos(divTheme, 0, 46);
+    lv_obj_set_style_bg_color(divTheme, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divTheme, 0, 0);
+    lv_obj_set_style_pad_all(divTheme, 0, 0);
+
+    // Scrollable container — full content area now CONFIRM is in header.
+    // Height 190px: y=50 to y=240. Content: 17 rows × 34px = 578px → auto scroll.
+    themeList = lv_obj_create(scr_theme);
+    lv_obj_set_size(themeList, 320, 190);
+    lv_obj_set_pos(themeList, 0, 50);
+    lv_obj_set_style_bg_color(themeList, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(themeList, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(themeList, 0, 0);
+    lv_obj_set_style_pad_all(themeList, 0, 0);
+    lv_obj_set_flex_flow(themeList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(themeList, LV_DIR_VER);
+    applyScrollbarStyle(themeList);
+
+    // One row per theme
+    for (uint8_t i = 0; i < NUM_THEMES; i++) {
+        // Row — full-width button, no flex, children positioned absolutely
+        lv_obj_t * row = lv_btn_create(themeList);
+        lv_obj_set_size(row, 316, 34);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xDDDDE8), 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xC0C0D0), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        // 5 colour swatches — bg, fg, btn, tile, gps — each 14×20, 2px gap, starting x=6
+        const uint32_t swatchColours[5] = {
+            THEMES[i].bg, THEMES[i].fg, THEMES[i].btn, THEMES[i].tile, THEMES[i].gps
+        };
+        for (uint8_t s = 0; s < 5; s++) {
+            lv_obj_t * sw = lv_obj_create(row);
+            lv_obj_remove_style_all(sw);
+            lv_obj_set_size(sw, 14, 20);
+            lv_obj_set_pos(sw, 6 + s * 16, 7);
+            lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_color(sw, lv_color_hex(swatchColours[s]), 0);
+            lv_obj_set_style_border_color(sw, lv_color_hex(0x1A2A6C), 0);
+            lv_obj_set_style_border_width(sw, 1, 0);
+            lv_obj_set_style_radius(sw, 2, 0);
+            lv_obj_clear_flag(sw, LV_OBJ_FLAG_CLICKABLE);
+        }
+
+        // Theme name label — x=90 (5 swatches: 6 + 5×16 = 86, + 4 gap)
+        lv_obj_t * lbl = lv_label_create(row);
+        lv_label_set_text(lbl, THEME_NAMES[i]);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x1A2A6C), 0);
+        lv_obj_set_pos(lbl, 90, 9);
+
+        // Store theme index in user_data; callback reads it
+        lv_obj_set_user_data(row, (void *)(uintptr_t)i);
+        lv_obj_add_event_cb(row, [](lv_event_t * e) {
+            lv_obj_t * btn = (lv_obj_t *)lv_event_get_target(e);
+            pendingThemeIdx = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
+            picker_highlight_row(lv_obj_get_parent(btn), pendingThemeIdx);
+        }, LV_EVENT_CLICKED, NULL);
+    }
+}
+
+// --- Font picker child screen ---
+// Scrollable container of all 10 fonts. Each row renders FONTNAME 420 69 in that
+// font's own 36pt face. Tapping a row stages pendingFontIdx. CONFIRM saves to NVS,
+// calls applyFont(), updates the FONT tile label, returns to scr_menu.
+// BACK discards and returns to scr_menu.
+//
+// Helper: returns the 24pt lv_font_t pointer for a given font index.
+// Used exclusively by scr_font preview rows.
+static const lv_font_t * fontPtr24(uint8_t idx) {
+    switch (idx) {
+        case 1:  return FONT_B612_24;
+        case 2:  return FONT_DIN1451_24;
+        case 3:  return FONT_DSEG14_24;
+        case 4:  return FONT_DSEG7_24;
+        case 5:  return FONT_LCD_24;
+        case 6:  return FONT_SEGMENT7_24;
+        case 7:  return FONT_SHARETECHMONO_24;
+        default: return &lv_font_montserrat_24;
+    }
+}
+
+void buildFontUI() {
+    scr_font = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_font, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_font, LV_OPA_COVER, 0);
+
+    // Title
+    lblFontTitle = lv_label_create(scr_font);
+    lv_label_set_text(lblFontTitle, "FONT");
+    lv_obj_set_pos(lblFontTitle, 10, 12);
+    lv_obj_set_style_text_font(lblFontTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblFontTitle, lv_color_hex(0x1A2A6C), 0);
+
+    // CONFIRM button — header bar, between title and BACK (v4.6.0)
+    // Moved from bottom (y=210, off-screen) to header bar, same pattern as
+    // THEME screen CONFIRM and scr_gps RECALIB GPS.
+    btnFontConfirm = makeBtn(scr_font, 108, 4, 102, 36, confirm_font_cb);
+    lv_obj_t * lblConf = makeBtnLabel(btnFontConfirm);
+    lv_label_set_text(lblConf, LV_SYMBOL_OK " CONFIRM");
+    lv_obj_set_style_text_font(lblConf, &lv_font_montserrat_12, 0);
+
+    // BACK button — top-right, unchanged
+    btnFontBack = makeBtn(scr_font, 214, 4, 100, 36, back_font_cb);
+    lv_obj_t * lblFBack = makeBtnLabel(btnFontBack);
+    lv_label_set_text(lblFBack, LV_SYMBOL_NEW_LINE " BACK");
+    lv_obj_set_style_text_font(lblFBack, &lv_font_montserrat_14, 0);
+
+    // Divider
+    divFontScr = lv_obj_create(scr_font);
+    lv_obj_set_size(divFontScr, 320, 2);
+    lv_obj_set_pos(divFontScr, 0, 46);
+    lv_obj_set_style_bg_color(divFontScr, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divFontScr, 0, 0);
+    lv_obj_set_style_pad_all(divFontScr, 0, 0);
+
+    // Scrollable container — full content area now CONFIRM is in header.
+    // Height 190px: y=50 to y=240. Content: 8 rows × 36px = 288px → auto scroll.
+    fontList = lv_obj_create(scr_font);
+    lv_obj_set_size(fontList, 320, 190);
+    lv_obj_set_pos(fontList, 0, 50);
+    lv_obj_set_style_bg_color(fontList, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(fontList, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(fontList, 0, 0);
+    lv_obj_set_style_pad_all(fontList, 0, 0);
+    lv_obj_set_flex_flow(fontList, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(fontList, LV_DIR_VER);
+    applyScrollbarStyle(fontList);
+
+    // One row per font — preview text rendered in that font's own 24pt face
+    for (uint8_t i = 0; i < NUM_FONTS; i++) {
+        lv_obj_t * row = lv_btn_create(fontList);
+        lv_obj_set_size(row, 316, 36);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xDDDDE8), 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0xC0C0D0), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Preview label: "FONTNAME 420 69" in that font's 24pt face
+        char preview[32];
+        snprintf(preview, sizeof(preview), "%s 420 69", FONT_NAMES[i]);
+        lv_obj_t * lbl = lv_label_create(row);
+        lv_label_set_text(lbl, preview);
+        lv_obj_set_style_text_font(lbl, fontPtr24(i), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x1A2A6C), 0);
+        lv_obj_set_pos(lbl, 6, 6);
+
+        // Store font index; callback stages pendingFontIdx
+        lv_obj_set_user_data(row, (void *)(uintptr_t)i);
+        lv_obj_add_event_cb(row, [](lv_event_t * e) {
+            lv_obj_t * btn = (lv_obj_t *)lv_event_get_target(e);
+            pendingFontIdx = (uint8_t)(uintptr_t)lv_obj_get_user_data(btn);
+            picker_highlight_row(lv_obj_get_parent(btn), pendingFontIdx);
+        }, LV_EVENT_CLICKED, NULL);
+    }
+}
+
+// applyDangerStyle — initialises dangerBtnStyle/dangerBtnPressedStyle once and
+// attaches them to the given button. Called from buildFResetUI().
+// Theme-independent: dark red is the danger signal across all 17 themes.
+// File-scope statics declared near the scrollbar style vars above.
+// v1.0.19-NeoGPS CHANGE 4.
+static void applyDangerStyle(lv_obj_t * btn) {
+    if (!dangerBtnStyleInit) {
+        lv_style_init(&dangerBtnStyle);
+        lv_style_set_bg_color(&dangerBtnStyle,   lv_color_hex(0x8B0000));
+        lv_style_set_bg_opa  (&dangerBtnStyle,   LV_OPA_COVER);
+
+        lv_style_init(&dangerBtnPressedStyle);
+        lv_style_set_bg_color(&dangerBtnPressedStyle, lv_color_hex(0x5A0000));
+        lv_style_set_bg_opa  (&dangerBtnPressedStyle, LV_OPA_COVER);
+
+        dangerBtnStyleInit = true;
+    }
+    lv_obj_add_style(btn, &dangerBtnStyle,        0);
+    lv_obj_add_style(btn, &dangerBtnPressedStyle, LV_STATE_PRESSED);
+}
+
+// --- Factory reset confirm screen ---
+// Presents a warning message and two buttons: CANCEL and RESET.
+// RESET executes the full factory reset, shows "RESET COMPLETE" for 1 second,
+// then navigates to scr_main.
+void buildFResetUI() {
+    scr_freset = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_freset, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_freset, LV_OPA_COVER, 0);
+
+    // Title
+    lblFresetTitle = lv_label_create(scr_freset);
+    lv_label_set_text(lblFresetTitle, "FACTORY RESET");
+    lv_obj_set_pos(lblFresetTitle, 10, 12);
+    lv_obj_set_style_text_font(lblFresetTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblFresetTitle, lv_color_hex(0x1A2A6C), 0);
+
+    // Divider
+    divFreset = lv_obj_create(scr_freset);
+    lv_obj_set_size(divFreset, 320, 2);
+    lv_obj_set_pos(divFreset, 0, 46);
+    lv_obj_set_style_bg_color(divFreset, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_border_width(divFreset, 0, 0);
+    lv_obj_set_style_pad_all(divFreset, 0, 0);
+
+    // Warning message
+    lblFresetWarning = lv_label_create(scr_freset);
+    lv_label_set_text(lblFresetWarning,
+        "All saved data will be erased.\nThis cannot be undone.");
+    lv_obj_set_size(lblFresetWarning, 300, 60);
+    lv_obj_set_pos(lblFresetWarning, 10, 60);
+    lv_obj_set_style_text_font(lblFresetWarning, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lblFresetWarning, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblFresetWarning, LV_TEXT_ALIGN_CENTER, 0);
+
+    // Status label — shows "RESET COMPLETE" after confirm, empty otherwise
+    lblFresetStatus = lv_label_create(scr_freset);
+    lv_label_set_text(lblFresetStatus, "");
+    lv_obj_set_size(lblFresetStatus, 300, 24);
+    lv_obj_set_pos(lblFresetStatus, 10, 128);
+    lv_obj_set_style_text_font(lblFresetStatus, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lblFresetStatus, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_align(lblFresetStatus, LV_TEXT_ALIGN_CENTER, 0);
+
+    // CANCEL button — left
+    btnFresetCancel = makeBtn(scr_freset, 20, 168, 120, 44, cancel_freset_cb);
+    lv_obj_t * lblCancel = makeBtnLabel(btnFresetCancel);
+    lv_label_set_text(lblCancel, LV_SYMBOL_CLOSE " CANCEL");
+    lv_obj_set_style_text_font(lblCancel, &lv_font_montserrat_14, 0);
+
+    // RESET button — right, dark red
+    // v1.0.19-NeoGPS CHANGE 4 — static lv_style_t danger styles replace inline
+    // lv_obj_set_style_bg_color calls. applyTheme() no longer overrides this button.
+    btnFresetConfirm = makeBtn(scr_freset, 180, 168, 120, 44, confirm_freset_cb);
+    applyDangerStyle(btnFresetConfirm);
+    lv_obj_t * lblReset = makeBtnLabel(btnFresetConfirm);
+    lv_label_set_text(lblReset, LV_SYMBOL_WARNING " RESET");
+    lv_obj_set_style_text_font(lblReset, &lv_font_montserrat_14, 0);
+}
+
+// =====================
+// ====== UI UPDATE ====
+// =====================
+void ui_update(lv_timer_t * t) {
+    /* Snapshot shared state under mutex. */
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    double  s    = rally.currentSpeed; 
+    double  o    = rally.totalTrip;    /* v1.0.8-NeoGPS CHANGE 1: natively miles — MILE_MULTIPLIER removed */
+    double  iv   = rally.intervalTrip; /* v1.0.8-NeoGPS CHANGE 1: natively miles — MILE_MULTIPLIER removed */
+    double  h    = rally.hdop;
+    int32_t sat  = rally.satellites;
+    double  alt  = rally.altMeters * METERS_TO_FEET;
+    double  lat  = rally.latitude;
+    double  lon  = rally.longitude;
+    uint8_t gH   = rally.gpsHour;
+    uint8_t gM   = rally.gpsMinute;
+    uint8_t gS   = rally.gpsSecond;
+    bool    tV   = rally.timeValid;
+    bool    locValidSnap = rally.locValid;      /* v4.9.8 CHANGE 3: thread-safe snapshot */
+    uint32_t rejSnap     = rally.rejectedSteps;    /* v1.0.0-NeoGPS CHANGE 3 */
+    uint32_t sanSnap     = rally.sanityRejections; /* v1.0.0-NeoGPS CHANGE 3 */
+    uint32_t llfSnap     = rally.lastLocFalse;     /* v1.0.2-NeoGPS CHANGE 1 */
+    double  avgSpd       = rally.avgSpeed;         /* v1.0.10-NeoGPS CHANGE 4 */
+    double  maxSpd       = rally.maxSpeed;         /* v1.0.10-NeoGPS CHANGE 4 */
+    xSemaphoreGive(dataMutex);
+
+    /* Speed / odo / interval labels — cache-gated. */
+    char sBuf[24], oBuf[24], iBuf[24];
+    /* v1.0.10-NeoGPS CHANGE 4 — select display value and unit label by speedViewIdx.
+       0 = current speed ("mph"), 1 = avg speed ("avg"), 2 = max speed ("max"). */
+    double      sDisp;
+    const char *sUnit;
+    switch (speedViewIdx) {
+        case 1:  sDisp = avgSpd; sUnit = "avg"; break;
+        case 2:  sDisp = maxSpd; sUnit = "max"; break;
+        default: sDisp = s;      sUnit = "mph"; break;
+    }
+    int32_t s_int = (int32_t)(sDisp + 0.5);
+    int32_t o_int = (int32_t)o;
+    int32_t o_dec = (int32_t)((o  - o_int) * 100);
+    int32_t i_int = (int32_t)iv;
+    int32_t i_dec = (int32_t)((iv - i_int) * 100);
+    snprintf(sBuf, sizeof(sBuf), "%d",      s_int);
+    snprintf(oBuf, sizeof(oBuf), "%d.%02d", o_int, o_dec);
+    snprintf(iBuf, sizeof(iBuf), "%d.%02d", i_int, i_dec);
+
+    if (freezeDisplay && (millis() - freezeStartMs >= 60000UL)) {  /* 60 s auto-unfreeze */
+        freezeDisplay = false;
+        stopFrzBlink();
+        lv_label_set_text(lblFrz, LV_SYMBOL_PAUSE " FRZ");
+    }
+    if (!freezeDisplay) {
+        /* Update speed value — refresh on numeric change OR view change (v1.0.10-NeoGPS CHANGE 4) */
+        if (s_int != uiCacheSpeed || (int32_t)speedViewIdx != uiCacheSpeedViewIdx) {
+            lv_label_set_text(lblSpeed, sBuf);
+            uiCacheSpeed = s_int;
+        }
+        /* Update unit label when view changes (v1.0.10-NeoGPS CHANGE 4) */
+        if ((int32_t)speedViewIdx != uiCacheSpeedViewIdx) {
+            lv_label_set_text(lblSpeedUnit, sUnit);
+            uiCacheSpeedViewIdx = (int32_t)speedViewIdx;
+        }
+        /* v1.0.17-NeoGPS CHANGE 5 — span text update replaces lv_label_set_text. */
+        if (strncmp(oBuf, uiCacheOdo, sizeof(uiCacheOdo)) != 0) {
+            lv_span_set_text(spanOdoNum, oBuf);
+            lv_spangroup_refr_mode(spanOdo);
+            strncpy(uiCacheOdo, oBuf, sizeof(uiCacheOdo) - 1);
+        }
+        if (strncmp(iBuf, uiCacheInt, sizeof(uiCacheInt)) != 0) {
+            lv_span_set_text(spanIntNum, iBuf);
+            lv_spangroup_refr_mode(spanInt);
+            strncpy(uiCacheInt, iBuf, sizeof(uiCacheInt) - 1);
+        }
+    }
+
+    /* ── GPS fix LED (v1.0.11-NeoGPS CHANGE 1) ──────────────────────────
+       Three states driven by sat count and HDOP:
+         No fix    (sat < GPS_MIN_SATS):                     red spinner, ledGps hidden.
+         Acquiring (sat >= GPS_MIN_SATS, h > GPS_MAX_HDOP):  amber blink 800 ms, spinner hidden.
+         Locked    (sat >= GPS_MIN_SATS, h <= GPS_MAX_HDOP): green steady, spinner hidden.
+       v1.0.24-NeoGPS CHANGE 5: no-fix → red spinner; acquiring → amber 800 ms.
+       Cache: uiCacheSigSat + uiCacheSigTxt gate LED updates identically to
+       the former signal label update.                                       */
+    {
+        const char* sigText = "NO FIX";
+        if (sat >= GPS_MIN_SATS) {
+            if      (h < GPS_MAX_HDOP * 0.6f) sigText = "EXCL";
+            else if (h < GPS_MAX_HDOP)        sigText = "GOOD";
+            else                               sigText = "POOR";
+        }
+        if (sat != uiCacheSigSat ||
+            strncmp(sigText, uiCacheSigTxt, sizeof(uiCacheSigTxt)) != 0) {
+
+            if (sat < GPS_MIN_SATS) {
+                /* No fix — stop blink, hide LED, show spinner. */
+                stopGpsBlink();
+                lv_obj_add_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
+            } else if (h > (double)GPS_MAX_HDOP) {
+                /* Acquiring — amber blink 800 ms, hide spinner. */
+                lv_obj_clear_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
+                lv_led_on(ledGps);
+                lv_led_set_color(ledGps, lv_color_hex(0xCC8800));
+                if (gpsBlinkPeriod != 800u) {
+                    stopGpsBlink();
+                    gpsBlinkTimer  = lv_timer_create(gps_blink_cb, 800, NULL);
+                    gpsBlinkPeriod = 800u;
+                }
+            } else {
+                /* Locked — stop blink, steady green, hide spinner. */
+                stopGpsBlink();
+                lv_obj_clear_flag(ledGps, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerGps, LV_OBJ_FLAG_HIDDEN);
+                lv_led_on(ledGps);
+                lv_led_set_color(ledGps, lv_color_hex(0x228B22));
+            }
+            uiCacheSigSat = sat;
+            strncpy(uiCacheSigTxt, sigText, sizeof(uiCacheSigTxt) - 1);
+        }
+    }
+
+    /* ── SATS fix-type LED (v1.0.11-NeoGPS CHANGE 2) ────────────────────
+       Three states driven by sat count:
+         NA  (sat < 3):  red   0xCC2200, blink 250 ms. (v1.0.24-NeoGPS CHANGE 6)
+         2D  (sat == 3): amber 0xCC8800, blink 800 ms.
+         3D  (sat >= 4): green 0x228B22, steady.                              */
+    {
+        uint32_t reqSatsPeriod;
+        if (sat < 3) {
+            reqSatsPeriod = 250u;
+        } else if (sat == 3) {
+            reqSatsPeriod = 800u;
+        } else {
+            reqSatsPeriod = 0xFFFFFFFFu;  /* sentinel: 3D steady */
+        }
+
+        if (reqSatsPeriod != satsBlinkPeriod) {
+            stopSatsBlink();
+            if (sat < 3) {
+                /* NA — red blink 250 ms. (v1.0.24-NeoGPS CHANGE 6) */
+                satsBlinkCol    = 0xCC2200;
+                lv_led_on(ledSats);
+                lv_led_set_color(ledSats, lv_color_hex(0xCC2200));
+                satsBlinkTimer  = lv_timer_create(sats_blink_cb, 250, NULL);
+                satsBlinkPeriod = 250u;
+            } else if (sat == 3) {
+                /* 2D — amber blink 800 ms. */
+                satsBlinkCol    = 0xCC8800;
+                lv_led_on(ledSats);
+                lv_led_set_color(ledSats, lv_color_hex(0xCC8800));
+                satsBlinkTimer  = lv_timer_create(sats_blink_cb, 800, NULL);
+                satsBlinkPeriod = 800u;
+            } else {
+                /* 3D — green steady. */
+                lv_led_on(ledSats);
+                lv_led_set_color(ledSats, lv_color_hex(0x228B22));
+                satsBlinkPeriod = 0xFFFFFFFFu;
+            }
+        }
+    }
+
+    /* ── HDOP LED (v1.0.11-NeoGPS CHANGE 3) ────────────────────────────
+       Replaces lblHdop text-blink block. Three active bands plus no-fix:
+         No fix  (h >= 99.0):             red spinner, ledHdop hidden. (v1.0.24-NeoGPS CHANGE 7)
+         Green   (h <= GPS_MAX_HDOP):     green 0x228B22, on,   steady.
+         Amber   (h <= GPS_MAX_HDOP_ODO): amber 0xCC8800, on,   blink 800 ms.
+         Red     (h >  GPS_MAX_HDOP_ODO): red   0xCC2200, on,   blink 250 ms.
+       Operators mirror gpsTask() gates exactly (<=/>).                     */
+    {
+        const uint32_t HDOP_BLINK_PERIOD_AMBER = 800u;
+        const uint32_t HDOP_BLINK_PERIOD_RED   = 250u;
+
+        uint32_t reqPeriod;
+        uint32_t reqCol;
+
+        if (h >= GPS_HDOP_NO_FIX) {
+            reqPeriod = 0xFFFFFFFEu;  /* sentinel: no-fix spinner. Distinct from boot (0),
+                                         green (0xFFFFFFFFu), amber (800), red (250) so the
+                                         gate fires on first tick. (v1.0.25-NeoGPS BUG FIX) */
+            reqCol    = 0xCC2200;  /* colour unused in no-fix — spinner shown instead */
+        } else if (h <= (double)GPS_MAX_HDOP) {
+            reqPeriod = 0xFFFFFFFFu;  /* sentinel: green steady */
+            reqCol    = 0x228B22;
+        } else if (h <= (double)GPS_MAX_HDOP_ODO) {
+            reqPeriod = HDOP_BLINK_PERIOD_AMBER;
+            reqCol    = 0xCC8800;
+        } else {
+            reqPeriod = HDOP_BLINK_PERIOD_RED;
+            reqCol    = 0xCC2200;
+        }
+
+        if (reqPeriod != hdopBlinkPeriod) {
+            stopHdopBlink();
+            hdopBlinkCol = reqCol;
+            if (h >= GPS_HDOP_NO_FIX) {
+                /* No fix — hide LED, show spinner. (v1.0.24-NeoGPS CHANGE 7) */
+                lv_obj_add_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
+                hdopBlinkPeriod = 0xFFFFFFFEu;  /* match reqPeriod sentinel (v1.0.25-NeoGPS BUG FIX) */
+            } else if (reqPeriod == 0xFFFFFFFFu) {
+                /* Green band — show LED, hide spinner, steady on. */
+                lv_obj_clear_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_led_on(ledHdop);
+                lv_led_set_color(ledHdop, lv_color_hex(reqCol));
+                hdopBlinkPeriod = 0xFFFFFFFFu;
+            } else {
+                /* Amber or red — show LED, hide spinner, show colour then start blink. */
+                lv_obj_clear_flag(ledHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_add_flag(spinnerHdop, LV_OBJ_FLAG_HIDDEN);
+                lv_led_on(ledHdop);
+                lv_led_set_color(ledHdop, lv_color_hex(reqCol));
+                hdopBlinkTimer  = lv_timer_create(hdop_blink_cb, reqPeriod, NULL);
+                hdopBlinkPeriod = reqPeriod;
+            }
+        }
+    }
+
+    /* Clock labels — skip update when second unchanged.
+       lblClockBig on scr_clock shows the time adjusted by pendingUtcOffset so
+       the user sees a live preview of the new offset before confirming.
+       lblClock on scr_main always uses the committed utcOffset.
+       v1.0.23-NeoGPS CHANGE 3: pendingUtcOffset used for lblClockBig preview. */
+    char timeBuf[12];
+    bool onClockScreen = (lv_screen_active() == scr_clock);
+    int8_t displayOffset = onClockScreen ? pendingUtcOffset : utcOffset;
+    if (tV) {
+        int16_t h24 = (int16_t)gH + displayOffset;
+        if (h24 < 0)  h24 += 24;
+        if (h24 > 23) h24 -= 24;
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d", h24, gM, gS);
+    } else {
+        snprintf(timeBuf, sizeof(timeBuf), "HH:MM:SS");
+    }
+    if (gS != uiCacheSecond ||
+        strncmp(timeBuf, uiCacheTimeStr, sizeof(uiCacheTimeStr)) != 0) {
+        lv_label_set_text(lblClock,    timeBuf);
+        lv_label_set_text(lblClockBig, timeBuf);
+        uiCacheSecond = gS;
+        strncpy(uiCacheTimeStr, timeBuf, sizeof(uiCacheTimeStr) - 1);
+    }
+
+    /* UTC offset label — update only when scr_clock is not active.
+       While scr_clock is open, utc_minus_cb / utc_plus_cb own lblUtcOffset
+       directly (pending display). Allowing ui_update() to write here while
+       scr_clock is active would immediately overwrite the pending value with
+       the committed utcOffset on the next 100 ms tick.
+       v1.0.23-NeoGPS CHANGE 3. */
+    if (!onClockScreen && utcOffset != uiCacheUtcOff) {
+        if (utcOffset >= 0) {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC+%d", utcOffset);
+        } else {
+            lv_label_set_text_fmt(lblUtcOffset, "UTC%d",  utcOffset);
+        }
+        uiCacheUtcOff = utcOffset;
+    }
+
+    /* ── scr_gps table ───────────────────────────────────────────────────
+       v4.3.0 CHANGE 4: guard the entire GPS diagnostic block with an
+       active-screen check so all table writes are skipped when scr_gps is
+       not visible — no LVGL processing, no heap activity during a stage.
+       v1.0.20-NeoGPS: lv_label_set_text → lv_table_set_cell_value.
+       HDOP band index (0=no-fix, 1=green, 2=amber, 3=red) written to
+       gpsTable user_data every tick so the draw callback can colour the row
+       even when the band changes without a cell-value change.              */
+    if (lv_screen_active() == scr_gps) {
+        const char* fixText = "NO FIX";
+        if (sat >= GPS_MIN_SATS) {
+            if      (h < GPS_MAX_HDOP * 0.6f) fixText = "EXCL";
+            else if (h < GPS_MAX_HDOP)        fixText = "GOOD";
+            else                               fixText = "POOR";
+        }
+        /* BUG FIX (v4.9.4): LVGL 9.x lv_snprintf does not correctly handle
+           double arguments to %f/%Nf format specifiers on ESP32 — all such
+           values are routed through standard C library snprintf() into stack
+           buffers, then written via lv_table_set_cell_value(). */
+        char gpsBuf[32];
+        if (locValidSnap) {
+            lv_table_set_cell_value_fmt(gpsTable, GPS_ROW_SATS,   1, "%d",  sat);
+            lv_table_set_cell_value(gpsTable,     GPS_ROW_FIX,    1, fixText);
+            snprintf(gpsBuf, sizeof(gpsBuf), "%.1f",   h);
+            lv_table_set_cell_value(gpsTable,     GPS_ROW_HDOP,   1, gpsBuf);
+            snprintf(gpsBuf, sizeof(gpsBuf), "%.0f ft", alt);
+            lv_table_set_cell_value(gpsTable,     GPS_ROW_ALT,    1, gpsBuf);
+            snprintf(gpsBuf, sizeof(gpsBuf), "%.6f",   lat);
+            lv_table_set_cell_value(gpsTable,     GPS_ROW_LAT,    1, gpsBuf);
+            snprintf(gpsBuf, sizeof(gpsBuf), "%.6f",   lon);
+            lv_table_set_cell_value(gpsTable,     GPS_ROW_LON,    1, gpsBuf);
+        } else {
+            lv_table_set_cell_value(gpsTable, GPS_ROW_SATS,   1, "---");
+            lv_table_set_cell_value(gpsTable, GPS_ROW_FIX,    1, "NO FIX");
+            lv_table_set_cell_value(gpsTable, GPS_ROW_HDOP,   1, "---");
+            lv_table_set_cell_value(gpsTable, GPS_ROW_ALT,    1, "---");
+            lv_table_set_cell_value(gpsTable, GPS_ROW_LAT,    1, "---");
+            lv_table_set_cell_value(gpsTable, GPS_ROW_LON,    1, "---");
+        }
+        /* Rejection counters */
+        lv_table_set_cell_value_fmt(gpsTable, GPS_ROW_REJSTP, 1, "%lu", (unsigned long)rejSnap);
+        lv_table_set_cell_value_fmt(gpsTable, GPS_ROW_REJSAN, 1, "%lu", (unsigned long)sanSnap);
+        lv_table_set_cell_value_fmt(gpsTable, GPS_ROW_LLF,    1, "%lu", (unsigned long)llfSnap);
+
+        /* Row colour bands → packed user_data for the draw-event callback.
+           v1.0.21-NeoGPS CHANGE 3.
+           HDOP:    0=no-fix/green (no highlight), 1=amber (≤GPS_MAX_HDOP_ODO),
+                    2=red (>GPS_MAX_HDOP_ODO). Bands 0+1 from v1.0.20 collapsed:
+                    green and no-fix both map to 0 (no row highlight needed).
+           REJ STP: 0=clean, 1=amber (≥1 rejection), 2=red (≥5 rejections).
+           REJ SAN: same thresholds as REJ STP.
+           LLF intentionally not colour-coded — non-zero counts are expected
+           in canopy-heavy stages and would produce constant false alarms.     */
+        uint32_t hdopBand;
+        if      (h >= GPS_HDOP_NO_FIX || h <= (double)GPS_MAX_HDOP) hdopBand = 0;  /* no highlight */
+        else if (h <= (double)GPS_MAX_HDOP_ODO)          hdopBand = 1;  /* amber */
+        else                                               hdopBand = 2;  /* red */
+
+        uint32_t rejBand = (rejSnap == 0) ? 0u : (rejSnap < 5u) ? 1u : 2u;
+        uint32_t sanBand = (sanSnap == 0) ? 0u : (sanSnap < 5u) ? 1u : 2u;
+
+        lv_obj_set_user_data(gpsTable,
+            (void *)(uintptr_t)GPS_UD_PACK(hdopBand, rejBand, sanBand));
+        lv_obj_invalidate(gpsTable);
+    }
+
+    /* Threshold-gated NVS odometer save. */
+    if (o - lastSavedOdo >= ODO_SAVE_INTERVAL_MI) {
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        double tripToSave = rally.totalTrip;
+        xSemaphoreGive(dataMutex);
+        prefs.putDouble("odo", tripToSave);
+        /* Use mutex-fresh value; totalTrip is natively miles. */
+        lastSavedOdo = tripToSave;
+    }
+
+    /* Auto-return to scr_main on 30 s inactivity. */
+    if (lv_display_get_inactive_time(NULL) > 30000UL) {
+        lv_obj_t * active = lv_screen_active();
+        if (active != scr_main && active != scr_splash) {
+            lv_screen_load_anim(scr_main, LV_SCR_LOAD_ANIM_FADE_IN, UI_ANIM_FADE_MS, 0, false);
+        }
+    }
+}
+
+// ========================
+// ====== SPLASH SCREEN ===
+// ========================
+
+#define SPLASH_DURATION_MS 3500
+
+// loon_argb8888: 109x37 pixels, ARGB8888 BGRA, stored in flash (PROGMEM)
+// BG pixels fully transparent. Rendered from original SVG path at scale=0.1996.
+// 16132 bytes in flash, zero DRAM cost.
+static const uint8_t loon_argb8888[16132] PROGMEM = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF,
+    0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x6C, 0x2A, 0x1A, 0xFF, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+};
+
+static void splash_timer_cb(lv_timer_t * timer) {
+    /* 100aw: no calibration flow — always load scr_main after splash. */
+    lv_screen_load_anim(scr_main, LV_SCR_LOAD_ANIM_FADE_IN, UI_ANIM_FADE_MS, 0, false);
+}
+
+void buildSplashUI() {
+    scr_splash = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_splash, lv_color_hex(0xDDDDE8), 0);
+    lv_obj_set_style_bg_opa(scr_splash, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(scr_splash, LV_OBJ_FLAG_SCROLLABLE);
+
+    // ------------------------------------------------------------------
+    // Loon silhouette — lv_img widget backed by PROGMEM RGB565 array.
+    // loon_argb8888 lives entirely in flash: zero DRAM cost, no canvas needed.
+    // lv_img_dsc_t is a small stack struct; LVGL reads pixel data via
+    // pgm_read_byte() on AVR or direct flash access on ESP32 (flash is
+    // memory-mapped, so PROGMEM on ESP32 is a no-op but keeps the intent clear).
+    // LV_USE_CANVAS is not required for this approach.
+    // ------------------------------------------------------------------
+    static const lv_img_dsc_t loon_dsc = {
+        .header = {
+            .cf     = LV_COLOR_FORMAT_ARGB8888,
+            .w      = 109,
+            .h      = 37,
+        },
+        .data_size = 109 * 37 * 4,
+        .data      = loon_argb8888,
+    };
+    lv_obj_t * loon_img = lv_img_create(scr_splash);
+    lv_img_set_src(loon_img, &loon_dsc);
+    lv_obj_set_pos(loon_img, 207, 93);
+
+    // ------------------------------------------------------------------
+    // Wordmark: ".altura" — Montserrat 48 (closest to SVG 52px)
+    // SVG baseline y=130 → LVGL top y ≈ 82
+    // ------------------------------------------------------------------
+    lv_obj_t * lbl_wordmark = lv_label_create(scr_splash);
+    lv_label_set_text(lbl_wordmark, ".altura");
+    lv_obj_set_style_text_font(lbl_wordmark, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(lbl_wordmark, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_text_letter_space(lbl_wordmark, -1, 0);
+    lv_obj_set_pos(lbl_wordmark, 18, 82);
+
+    // ------------------------------------------------------------------
+    // Divider — x=18, y=142, w=284, h=1, ~20% opacity
+    // ------------------------------------------------------------------
+    lv_obj_t * divider = lv_obj_create(scr_splash);
+    lv_obj_set_size(divider, 284, 1);
+    lv_obj_set_pos(divider, 18, 142);
+    lv_obj_set_style_bg_color(divider, lv_color_hex(0x1A2A6C), 0);
+    lv_obj_set_style_bg_opa(divider, LV_OPA_20, 0);
+    lv_obj_set_style_border_width(divider, 0, 0);
+    lv_obj_set_style_pad_all(divider, 0, 0);
+    lv_obj_clear_flag(divider, LV_OBJ_FLAG_SCROLLABLE);
+
+    // ------------------------------------------------------------------
+    // Subtitle: "RALLY COMPUTER" — Montserrat 12, centred, letter-spaced
+    // ------------------------------------------------------------------
+    lv_obj_t * lbl_sub = lv_label_create(scr_splash);
+    lv_label_set_text(lbl_sub, "RALLY COMPUTER");
+    lv_obj_set_style_text_font(lbl_sub, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_sub, lv_color_hex(0x555577), 0);
+    lv_obj_set_style_text_letter_space(lbl_sub, 5, 0);
+    lv_obj_set_width(lbl_sub, 284);
+    lv_obj_set_pos(lbl_sub, 18, 150);
+    lv_obj_set_style_text_align(lbl_sub, LV_TEXT_ALIGN_CENTER, 0);
+
+    // ------------------------------------------------------------------
+    // Version — Montserrat 8, centred
+    // (LV_FONT_MONTSERRAT_8 must be 1 in lv_conf.h)
+    // ------------------------------------------------------------------
+    lv_obj_t * lbl_ver = lv_label_create(scr_splash);
+    lv_label_set_text(lbl_ver, FIRMWARE_VERSION);
+    lv_obj_set_style_text_font(lbl_ver, &lv_font_montserrat_8, 0);
+    lv_obj_set_style_text_color(lbl_ver, lv_color_hex(0x8A8A8A), 0);
+    lv_obj_set_style_text_letter_space(lbl_ver, 2, 0);
+    lv_obj_set_width(lbl_ver, 284);
+    lv_obj_set_pos(lbl_ver, 18, 220);
+    lv_obj_set_style_text_align(lbl_ver, LV_TEXT_ALIGN_CENTER, 0);
+
+    // ------------------------------------------------------------------
+    // One-shot timer → fade to scr_main after SPLASH_DURATION_MS
+    // ------------------------------------------------------------------
+    lv_timer_t * splash_timer = lv_timer_create(splash_timer_cb, SPLASH_DURATION_MS, NULL);
+    lv_timer_set_repeat_count(splash_timer, 1);
+}
+
+
+// =====================
+// ====== GPS TASK ====
+// =====================
+// GPS accumulation logic — NeoGPS implementation (v1.0.0-NeoGPS CHANGE 1).
+// Functionally identical to the TinyGPSPlus implementation in v1.0.4-aw.
+// All rally logic (speed gate, sanity gate, first-fix, haversine accumulation,
+// anchor advance, GPS_MAX_STEP_M spike cap) is preserved 1:1.
+//
+// Source logic (gpsHandler in gps.ino) as implemented here:
+//
+//   SANITY GATE  — abs(fix.speed_kph() - speed) < 200.0
+//     Rejects fixes where speed changed > 200 km/h since last accepted fix.
+//     Implemented as: fabsf(currentSpeedKmh - prevSpeedKmh) < GPS_SPEED_SANITY_KMPH
+//     prevSpeedKmh is a task-private static, initialised to 0.0.
+//     On failure: rally.sanityRejections incremented (CHANGE 4).
+//
+//   LOCATION VALID — fix.valid.location
+//     NeoGPS sets this only when the coordinate parses cleanly from a
+//     checksum-valid sentence. No sentinel-coordinate leak path exists.
+//
+//   FIRST FIX — source: if(firstFix == true) { ... firstFix = false; }
+//     Implemented via gpsHasFix: first valid fix sets anchor, no accumulation.
+//
+//   SPEED GATE — fix.speed_kph() > GPS_MIN_SPEED_KMH (3.0)
+//
+//   ACCUMULATION — haversineM() returns metres (same formula as
+//     TinyGPSPlus::distanceBetween; Earth radius 6372795.0 m, double precision).
+//     rally.intervalTrip += d  (source: partDist)
+//     rally.totalTrip    += d  (source: totalDist)
+//     Guarded by GPS_MAX_STEP_M (30.0 m). On rejection: rally.rejectedSteps
+//     incremented (CHANGE 4).
+//
+//   ANCHOR UPDATE — unconditional on every valid location fix.
+//
+//   SPEED WRITE — fix.speed_mph() → rally.currentSpeed (mph).
+//     When speed gate fails: rally.currentSpeed = 0.0.
+//
+//   NeoGPS drain loop replaces TinyGPSPlus byte-by-byte encode():
+//     while (gps.available(GNSS)) processes complete sentence-sets only.
+//     Each iteration yields one coherent fix where location, speed, hdop,
+//     and time all belong to the same epoch (NMEAGPS_ACCUMULATE_FIX).
+//
+// Thread safety: all shared rally.* writes under dataMutex (single section).
+// prevSpeedKmh is task-private — no mutex required.
+// gps and fix are file-scope statics accessed only by gpsTask() (Core 0).
+
+// v1.0.8-NeoGPS CHANGE 1: haversineM() removed — replaced by
+// NeoGPS::Location_t::DistanceMiles() at the call site in gpsTask().
+
+void gpsTask(void * arg) {
+    esp_task_wdt_add(NULL);
+
+    /* Last accepted speed (mph) — sanity gate reference. */
+    static float prevSpeedMph = 0.0f;
+
+    /* Guards accumulation on blackout recovery — first post-blackout fix resets anchor only. */
+    static bool lastLocOK = false;
+
+    while (true) {
+        esp_task_wdt_reset();
+
+        /* Drain UART — returns true only when a complete RMC+GGA set is ready. */
+        //
+        while (gps.available(GNSS)) {
+
+            fix = gps.read();
+
+            // ── NO-LOCATION PATH ─────────────────────────────────────────
+            //
+            // When fix.valid.location is false (e.g. a time-only fix, or
+            // a sentence-set that arrived before the first position lock),
+            // update display-only fields under mutex then skip accumulation.
+            // Mirrors ciprian.ino: the inner if(gps.location.isUpdated())
+            // block was simply not entered on ticks without a position update.
+            //
+            if (!fix.valid.location) {
+                xSemaphoreTake(dataMutex, portMAX_DELAY);
+                if (fix.valid.hdop) {
+                    /* CHANGE 3 — pure double division; no float intermediate.
+                       fix.hdop is uint16_t scaled ×1000 (1000 = HDOP 1.0). */
+                    rally.hdop = (double)fix.hdop / 1000.0;
+                }
+                if (fix.valid.satellites) {
+                    rally.satellites = (int32_t)fix.satellites;
+                }
+                if (fix.valid.altitude) {
+                    rally.altMeters = (double)fix.altitude();
+                }
+                if (fix.valid.time) {
+                    rally.gpsHour   = fix.dateTime.hours;
+                    rally.gpsMinute = fix.dateTime.minutes;
+                    rally.gpsSecond = fix.dateTime.seconds;
+                    rally.timeValid = true;
+                }
+                rally.locValid = false;
+                /* Clear lastLocOK — next valid fix re-establishes anchor without stale accumulation. */
+                lastLocOK = false;
+                /* Count blackout/invalid-location events — displayed as LLF on scr_gps. */
+                rally.lastLocFalse++;
+                xSemaphoreGive(dataMutex);
+                continue;  /* next sentence-set — skip all accumulation */
+            }
+
+            // ── SANITY GATE ───────────────────────────────────────────────
+            //
+            // Source (gpsHandler): if (abs(fix.speed_kph() - speed) < 200.0)
+            // v1.0.9-NeoGPS CHANGE 1: converted to mph for unit consistency
+            // with the native miles pipeline. fix.speed_mph() replaces
+            // fix.speed_kph(); GPS_SPEED_SANITY_MPH (124 mph) replaces
+            // GPS_SPEED_SANITY_KMPH (200 km/h) — equivalent threshold.
+            //
+            // On failure: rally.sanityRejections incremented inside mutex
+            // (CHANGE 4) and prevSpeedMph left unchanged — a rejected spike
+            // does not corrupt the reference value.
+            //
+            float currentSpeedMph = fix.speed_mph();
+
+            if (fabsf(currentSpeedMph - prevSpeedMph) < GPS_SPEED_SANITY_MPH) {
+
+                xSemaphoreTake(dataMutex, portMAX_DELAY);
+
+                /* fix.valid.location is always true here — confirmed above.
+                   Inner check retained verbatim from ciprian.ino for structural
+                   parity and readability. */
+                if (fix.valid.location) {
+
+                    // ── FIRST FIX ─────────────────────────────────────────
+                    //
+                    // Source: if(firstFix == true) { lastLoc = fix.location;
+                    //             firstFix = false; return; }
+                    // Unchanged from ciprian.ino.
+                    //
+                    if (!gpsHasFix) {
+
+                        gpsLastLoc = fix.location;
+                        gpsHasFix  = true;
+                        rally.currentSpeed = 0.0;
+                        /* v1.0.10-NeoGPS CHANGE 3 — start avg speed wall-clock timer on first fix.
+                           Guard: only arm if not already started (CLR ODO clears the flag so it
+                           re-arms cleanly on the next valid fix after a reset). */
+                        if (!rally.avgSpeedTimerStarted) {
+                            rally.avgSpeedStartMs      = millis();
+                            rally.avgSpeedTimerStarted = true;
+                        }
+                    } else {
+
+                        // ── SPEED GATE ────────────────────────────────────
+                        //
+                        // Source: fix.speed_kph() > MINIMUM_SPEED (3 km/h)
+                        //         && lastLocOK && firstFix == false
+                        // v1.0.1-NeoGPS CHANGE 1: lastLocOK added.
+                        // v1.0.9-NeoGPS CHANGE 1: converted to mph —
+                        //   currentSpeedMph > GPS_MIN_SPEED_MPH (1.864 mph).
+                        //
+                        if (lastLocOK && currentSpeedMph > (double)GPS_MIN_SPEED_MPH) {
+
+                            // ── DISTANCE ACCUMULATION ────────────────────
+                            //
+                            // v1.0.8-NeoGPS CHANGE 1: NeoGPS Location_t::DistanceMiles()
+                            //   replaces haversineM(). Operates on native NeoGPS integer-
+                            //   scaled coordinates — no float conversion round-trip.
+                            //   Returns miles; d is now natively in miles.
+                            //
+                            double d = fix.location.DistanceMiles(gpsLastLoc);
+
+                            // ── SPIKE CAP — GPS_MAX_STEP_MI ───────────────
+                            //
+                            // Hard cap on DistanceMiles() per tick (miles).
+                            // See GPS_MAX_STEP_MI define for full rationale.
+                            // On rejection: rally.rejectedSteps incremented
+                            // (CHANGE 3). Anchor still advances below so a
+                            // corrupt coordinate is not carried forward.
+                            //
+                            if (d <= (double)GPS_MAX_STEP_MI) {
+                                rally.intervalTrip += d;   /* source: partDist  */
+                                rally.totalTrip    += d;   /* source: totalDist */
+                            } else {
+                                /* Spike cap fired — count rejection. */
+                                rally.rejectedSteps++;
+                            }
+
+                            /* Write display speed. */
+                            rally.currentSpeed = (double)currentSpeedMph;
+
+                            /* v1.0.10-NeoGPS CHANGE 3 — update session max speed */
+                            if ((double)currentSpeedMph > rally.maxSpeed) {
+                                rally.maxSpeed = (double)currentSpeedMph;
+                            }
+
+                            /* v1.0.10-NeoGPS CHANGE 3 — compute avg speed.
+                               avg = totalTrip (miles) ÷ elapsed wall-clock hours since first fix.
+                               Methodology: total distance ÷ elapsed time (including stationary time),
+                               matching reference implementation (gps.ino fAvgSpdDist / elapsedHoursTotal).
+                               Guard: avgSpeedTimerStarted must be true and elapsed > 0. */
+                            if (rally.avgSpeedTimerStarted) {
+                                unsigned long elapsedMs = millis() - rally.avgSpeedStartMs;
+                                if (elapsedMs > 0) {
+                                    double elapsedHours = (double)elapsedMs / 3600000.0;
+                                    rally.avgSpeed = rally.totalTrip / elapsedHours;
+                                }
+                            }
+
+                        } else {
+                            /* Speed below gate or blackout recovery — zero display speed. */
+                            rally.currentSpeed = 0.0;
+                        }
+
+                        /* Advance anchor unconditionally on every valid fix. */
+                        gpsLastLoc = fix.location;
+                        /* Next tick eligible for accumulation. */
+                        lastLocOK = true;
+                    }
+                }
+
+                // ── DISPLAY FIELDS ────────────────────────────────────────
+                //
+                // Not accumulation gates — written for ui_update() only.
+                //
+                // HDOP: fix.hdop is uint16_t scaled ×1000.
+                //   CHANGE 3: pure double division — no float intermediate.
+                //
+                if (fix.valid.hdop) {
+                    rally.hdop = (double)fix.hdop / 1000.0;
+                }
+                if (fix.valid.satellites) {
+                    rally.satellites = (int32_t)fix.satellites;
+                }
+                /* Altitude — display only. */
+                if (fix.valid.altitude) {
+                    rally.altMeters = (double)fix.altitude();
+                }
+
+                if (fix.valid.time) {
+                    rally.gpsHour   = fix.dateTime.hours;
+                    rally.gpsMinute = fix.dateTime.minutes;
+                    rally.gpsSecond = fix.dateTime.seconds;
+                    rally.timeValid = true;
+                }
+
+                rally.locValid = true;
+                /* Lat/lon — display only. */
+                rally.latitude  = fix.latitude();
+                rally.longitude = fix.longitude();
+
+                xSemaphoreGive(dataMutex);
+
+                /* Update reference speed — only when sanity gate passes. */
+                prevSpeedMph = currentSpeedMph;
+
+            } else {
+                /* CHANGE 3 — sanity gate fired; count rejection under mutex. */
+                xSemaphoreTake(dataMutex, portMAX_DELAY);
+                rally.sanityRejections++;
+                xSemaphoreGive(dataMutex);
+                /* prevSpeedMph not updated — preserves reference against future spikes. */
+            }
+
+        }  /* end while (gps.available(GNSS)) */
+
+        /* 1 ms yield — matches source (Task_Data in esp32_tripmeter_cyd.ino).
+           GPS output rate (5 Hz / 200 ms) provides natural pacing; tight polling
+           ensures each fix is processed within 1 ms of arrival. */
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
+// -----------------------------------------------------------------
+// setGPSBaud57600 — v4.5.0 CHANGE 1
+// Sends a raw UBX-CFG-PRT packet to command the NEO-6M UART1 to
+// switch from its current baud rate to 57600. Called from setup()
+// while the UART is still open at 9600, before GNSS.end().
+//
+// Packet field map (20-byte payload, UART1 port id = 0x01):
+//   [0]    portID    = 0x01  UART1
+//   [1]    reserved  = 0x00
+//   [2-3]  txReady   = 0x0000  disabled
+//   [4-7]  mode      = 0x000008D0  8N1
+//   [8-11] baudRate  = 0x0000E100  57600 (little-endian)
+//   [12-13] inProtoMask  = 0x0007  UBX+NMEA+RTCM in
+//   [14-15] outProtoMask = 0x0003  UBX+NMEA out
+//   [16-17] flags    = 0x0000
+//   [18-19] reserved = 0x0000
+//
+// Checksum CK_A = 0xDE, CK_B = 0xC9
+//   Fletcher-8 verified over bytes [2]..[25] (class+id+len+payload).
+// -----------------------------------------------------------------
+void setGPSBaud57600() {
+    static const uint8_t packet[] = {
+        0xB5, 0x62,              /* UBX sync chars */
+        0x06, 0x00,              /* class CFG (0x06), id PRT (0x00) */
+        0x14, 0x00,              /* payload length = 20 */
+        0x01,                    /* portID = UART1 */
+        0x00,                    /* reserved */
+        0x00, 0x00,              /* txReady = disabled */
+        0xD0, 0x08, 0x00, 0x00, /* mode = 8N1 */
+        0x00, 0xE1, 0x00, 0x00, /* baudRate = 57600 (0x0000E100 little-endian) */
+        0x07, 0x00,              /* inProtoMask: UBX+NMEA+RTCM */
+        0x03, 0x00,              /* outProtoMask: UBX+NMEA */
+        0x00, 0x00,              /* flags */
+        0x00, 0x00,              /* reserved */
+        0xDE, 0xC9               /* CK_A, CK_B — Fletcher-8 over bytes [2]..[25] */
+    };
+    GNSS.write(packet, sizeof(packet));
+}
+
+// =====================
+// ====== SETUP =======
+// =====================
+void setup() {
+    setCpuFrequencyMhz(160); /* 240 → 160 MHz; APB stays 80 MHz, all peripherals unaffected */
+
+    // Disable WiFi and Bluetooth radios — not used by this firmware.
+    // Reduces current draw and eliminates RF noise on the shared 3.3V rail.
+    esp_wifi_stop();
+    // Guard required on IDF 5.x (Core 3.x): calling disable() when the
+    // controller was never initialised logs an error or panics.
+    if (esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_IDLE) {
+        esp_bt_controller_disable();
+    }
+
+    prefs.begin("rally", false);
+    rally.totalTrip = prefs.getDouble("odo", 0.0);
+    /* v4.9.8 CHANGE 7 — bounds check on restored odometer.
+       NVS CRC protects against bit-flip and partial-write corruption (returns
+       the default 0.0 if detected).  It does NOT protect against a value that
+       was written correctly but is semantically wrong — e.g. a future firmware
+       bug that accumulates without the motion gate, or a unit-conversion error.
+       Negative values are impossible by construction (addedDistance ≥ 0 always).
+       Any value outside [0, 999] is reset to zero and will be re-saved at the
+       next ODO_SAVE_INTERVAL_MI threshold. */
+    if (rally.totalTrip < 0.0 || rally.totalTrip > 999.0) {
+        rally.totalTrip = 0.0;
+    }
+
+    // Restore UTC Offset with Bulletproof Range Check
+    // Prevents corrupted NVS values (like +127) from breaking the clock UI.
+    utcOffset = (int8_t)prefs.getChar("utc_offset", UTC_OFFSET_DEFAULT);
+    if (utcOffset < -14 || utcOffset > 14) {
+        utcOffset = UTC_OFFSET_DEFAULT;
+    }
+	
+    // Restore brightness
+    uint8_t savedBl = prefs.getUChar("brightness", BL_LEVELS[BL_NUM_LEVELS - 1]);
+    blLevelIdx = BL_NUM_LEVELS - 1;
+    for (uint8_t i = 0; i < BL_NUM_LEVELS; i++) {
+        if (BL_LEVELS[i] == savedBl) { blLevelIdx = i; break; }
+    }
+
+    // Restore theme
+    themeIdx = prefs.getUChar("theme", 0);
+    if (themeIdx >= NUM_THEMES) themeIdx = 0;
+
+    // Restore font
+    fontIdx = prefs.getUChar("font_idx", 0);
+    if (fontIdx >= NUM_FONTS) fontIdx = 0;
+
+    dataMutex = xSemaphoreCreateMutex();
+    /* v4.9.8 CHANGE 5 — guard against xSemaphoreCreateMutex() returning NULL.
+       On a healthy ESP32 this cannot fail here (heap is nearly empty at this
+       point in setup()), but passing NULL to xSemaphoreTake() is undefined
+       behaviour under FreeRTOS.  If allocation ever fails, restart immediately
+       rather than proceeding to the first xSemaphoreTake with a NULL handle. */
+    if (!dataMutex) { esp_restart(); }
+
+    // -----------------------------------------------------------------
+    // v4.5.0 CHANGE 1+3 — Baud-switch handshake: 9600 → 57600
+    // Opens at the NEO-6M power-on default (9600), sends UBX-CFG-PRT to
+    // command the module to switch to 57600, then re-opens the UART at
+    // the new rate. GNSS.flush() (CHANGE 3) drains the TX buffer before
+    // GNSS.end() so the UBX packet is never cut mid-transmission.
+    // This negotiation runs every boot; the baud change is volatile (RAM
+    // only) and does not survive a module power cycle on its own.
+    // -----------------------------------------------------------------
+    GNSS.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN); /* start at NEO-6M default */
+    delay(100);
+    setGPSBaud57600();                                      /* v4.5.0 CHANGE 1: command module to 57600 */
+    delay(100);
+    GNSS.flush();                                           /* v4.5.0 CHANGE 3: drain TX before teardown */
+    GNSS.end();
+    delay(50);
+    GNSS.begin(57600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN); /* re-open at 57600 to match module */
+    delay(100);
+    // -----------------------------------------------------------------
+    // v1.0.7-NeoGPS CHANGE 1 — UBX-CFG-RATE: 5 Hz update rate
+    // Replaces the former $PMTK220,200*2C line, which the NEO-6M silently
+    // ignored (PMTK is a MediaTek protocol; NEO-6M only accepts UBX and
+    // $PUBX commands).
+    // measRate = 200 ms (0x00C8 LE), navRate = 1, timeRef = 1 (UTC).
+    // CK_A=0xDE CK_B=0x6A — Fletcher-8 over bytes [2]..[13].
+    // -----------------------------------------------------------------
+    static const uint8_t ubxCfgRate5Hz[] = {
+        0xB5, 0x62,        /* UBX sync chars */
+        0x06, 0x08,        /* class CFG (0x06), id RATE (0x08) */
+        0x06, 0x00,        /* payload length = 6 */
+        0xC8, 0x00,        /* measRate = 200 ms (5 Hz) */
+        0x01, 0x00,        /* navRate  = 1 */
+        0x01, 0x00,        /* timeRef  = 1 (UTC) */
+        0xDE, 0x6A         /* CK_A, CK_B */
+    };
+    GNSS.write(ubxCfgRate5Hz, sizeof(ubxCfgRate5Hz));
+    delay(100);
+
+    // -----------------------------------------------------------------
+    // v1.0.7-NeoGPS CHANGE 1 — UBX-CFG-MSG: disable all NMEA sentences,
+    // then re-enable GGA and RMC only.
+    // Replaces the former $PMTK314,0,1,0,1,0,0,...*28 line, which the
+    // NEO-6M silently ignored.
+    // Each packet: B5 62 06 01 03 00 <class> <id> <rate> CK_A CK_B
+    // All checksums verified via Fletcher-8 over bytes [2]..[9].
+    // -----------------------------------------------------------------
+    // Disable: DTM(F0,0A) GBS(F0,09) GGA(F0,00) GLL(F0,01) GPQ(F0,0D)
+    //          GRS(F0,06) GSA(F0,02) GST(F0,07) GSV(F0,03) RMC(F0,04)
+    //          VTG(F0,05) ZDA(F0,08) PUBX00(F1,00) PUBX01(F1,01)
+    //          PUBX03(F1,03) PUBX04(F1,04) PUBX05(F1,05) PUBX06(F1,06)
+    static const uint8_t ubxDisableAll[] = {
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x0A, 0x00, 0x04, 0x23,  /* DTM  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x09, 0x00, 0x03, 0x21,  /* GBS  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x00, 0x00, 0xFA, 0x0F,  /* GGA  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x01, 0x00, 0xFB, 0x11,  /* GLL  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x0D, 0x00, 0x07, 0x29,  /* GPQ  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x06, 0x00, 0x00, 0x1B,  /* GRS  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x02, 0x00, 0xFC, 0x13,  /* GSA  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x07, 0x00, 0x01, 0x1D,  /* GST  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x03, 0x00, 0xFD, 0x15,  /* GSV  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x04, 0x00, 0xFE, 0x17,  /* RMC  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x05, 0x00, 0xFF, 0x19,  /* VTG  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x08, 0x00, 0x02, 0x1F,  /* ZDA  */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x00, 0x00, 0xFB, 0x12,  /* PUBX00 */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x01, 0x00, 0xFC, 0x14,  /* PUBX01 */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x03, 0x00, 0xFE, 0x18,  /* PUBX03 */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x04, 0x00, 0xFF, 0x1A,  /* PUBX04 */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x05, 0x00, 0x00, 0x1C,  /* PUBX05 */
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF1, 0x06, 0x00, 0x01, 0x1E   /* PUBX06 */
+    };
+    GNSS.write(ubxDisableAll, sizeof(ubxDisableAll));
+    delay(500);
+
+    // Enable GGA (F0,00) rate=1 — CK_A=0xFB CK_B=0x10
+    static const uint8_t ubxEnableGga[] = {
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x00, 0x01, 0xFB, 0x10
+    };
+    GNSS.write(ubxEnableGga, sizeof(ubxEnableGga));
+    delay(100);
+
+    // Enable RMC (F0,04) rate=1 — CK_A=0xFF CK_B=0x18
+    static const uint8_t ubxEnableRmc[] = {
+        0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, 0x04, 0x01, 0xFF, 0x18
+    };
+    GNSS.write(ubxEnableRmc, sizeof(ubxEnableRmc));
+    delay(100);
+
+    // -----------------------------------------------------------------
+    // v4.7.0 CHANGE 1 — UBX-CFG-SBAS: enable SBAS differential corrections
+    // SBAS (WAAS in North America) provides satellite-broadcast ionospheric
+    // corrections and satellite clock error data, improving raw positional
+    // accuracy from ~2–3 m CEP toward ~1 m. Applied inside the NEO-6M
+    // navigation engine before NMEA output — fully transparent to firmware.
+    //
+    // mode     = 0x01  enabled; integrity disabled (integrity mode can
+    //                  suppress valid fixes on weak SBAS signal, which is
+    //                  unsafe for a moving ground vehicle)
+    // usage    = 0x03  range (bit 0) + differential corrections (bit 1);
+    //                  integrity bit 2 clear — consistent with mode above
+    // maxSBAS  = 0x03  allocate up to 3 SBAS tracking channels
+    // scanmode2= 0x00  auto
+    // scanmode1= 0x00000000  auto-scan all SBAS PRNs
+    //
+    // Checksum: CK_A = 0x2B, CK_B = 0xB9
+    //   Fletcher-8 over: 0x06, 0x16, 0x08, 0x00, 0x01, 0x03, 0x03,
+    //                    0x00, 0x00, 0x00, 0x00, 0x00
+    // -----------------------------------------------------------------
+    delay(100);
+    static const uint8_t ubxCfgSbas[] = {
+        0xB5, 0x62,              /* UBX sync chars */
+        0x06, 0x16,              /* class CFG (0x06), id SBAS (0x16) */
+        0x08, 0x00,              /* payload length = 8 (little-endian) */
+        0x01,                    /* mode: enabled, no integrity */
+        0x03,                    /* usage: range + diffCorr, no integrity */
+        0x03,                    /* maxSBAS: up to 3 channels */
+        0x00,                    /* scanmode2: auto */
+        0x00, 0x00, 0x00, 0x00,  /* scanmode1: auto-scan all PRNs */
+        0x2B, 0xB9               /* CK_A, CK_B — Fletcher-8 over bytes [2]..[13] */
+    };
+    GNSS.write(ubxCfgSbas, sizeof(ubxCfgSbas));
+
+    // -----------------------------------------------------------------
+    // UBX-CFG-NAV5: Automotive dynamic model + Static Hold @ 40 cm/s
+    // Sent as raw UBX binary to GNSS (HardwareSerial, UART2) once on boot.
+    // Settings are volatile (RAM only); re-applied every power cycle.
+    //
+    // UBX FIX A — Automotive dynamic model (payload byte [8] = 0x04)
+    //   dynModel = 4: constrains the NEO-6M navigation engine to ground-
+    //   vehicle physics (no vertical motion, no lateral sliding, bounded
+    //   acceleration). Reduces individual fix magnitude and Doppler noise
+    //   on a stationary ground vehicle. Primary benefit on a real stage;
+    //   moderate benefit in severe multipath.
+    //   Reference: UBX-CFG-NAV5, u-blox 6 Receiver Description §31.14
+    //
+    // UBX FIX B — Static Hold threshold (payload byte [22] = 0x28 = 40 cm/s)
+    //   staticHoldThresh raised 0x19 (25 cm/s) → 0x28 (40 cm/s) in v3.2.0,
+    //   forward-ported to v4.2.0. When the navigation engine computes a velocity
+    //   below this value it locks reported speed to 0 m/s and freezes position
+    //   output at the last stable fix. Suppresses Doppler noise spikes at the
+    //   hardware level before NMEA parsing. The higher threshold gives the module
+    //   more headroom to engage Static Hold in clean-signal stationary conditions.
+    //   SCOPE: only engages when the module can compute near-zero velocity.
+    //   Under marginal-signal conditions (HDOP ~2.0–2.5, 4–5 sats) the module
+    //   believes it is moving and Static Hold will not engage regardless of
+    //   threshold — the software gates (speed, hysteresis) carry the load there.
+    //   Exits on genuine evidence of movement. Mask bit 6 (staticHoldMask) is
+    //   set via mask = 0xFFFF to ensure the receiver applies this field.
+    //   Reference: UBX-CFG-NAV5, u-blox 6 Receiver Description §31.14,
+    //              Static Hold Mode §Navigation Engine Settings
+    //
+    // UBX FIX C — pDop ceiling reverted to 25.0 (v4.8.0 CHANGE 1)
+    //   v4.7.0 set pDop = 0x0032 (5.0). Under tree cover or mountain terrain
+    //   PDOP routinely exceeds 5.0, producing hardware fix blackouts that
+    //   froze the anchor and cascaded into jump filter rejection. Reverted
+    //   to 0x00FA (25.0, effectively unlimited) — the v4.6.2 value.
+    //   tDop is unchanged at 0x00FA (25.0).
+    //
+    // UBX FIX D — minElev raised 5° → 10° (v4.9.7 CHANGE 1)
+    //   Low-elevation satellites follow a longer atmospheric path, increasing
+    //   ionospheric/tropospheric delay and horizon multipath exposure.  The
+    //   internal patch lacked signal budget to afford rejecting them.  The
+    //   active antenna's 28 dB LNA gain provides sufficient margin to maintain
+    //   good fix quality on the reduced constellation at 10°.  Deferred note
+    //   from v4.7.0 now implemented.  Revert to 0x05 on dense-canopy or deep
+    //   mountain stages if satellite count drops below 4 above 10°.
+    //   cnoThreshNumSVs and cnoThresh remain 0x00 (disabled) — see v4.9.7
+    //   changelog NOTE for rationale.
+    //
+    // Payload field map (36 bytes, offsets from payload[0]):
+    //   [0-1]  mask             = 0xFFFF  apply all fields
+    //   [2]    dynModel         = 0x04    Automotive         ← UBX FIX A
+    //   [3]    fixMode          = 0x03    Auto 2D/3D
+    //   [4-7]  fixedAlt         = 0       (unused in auto mode)
+    //   [8-11] fixedAltVar      = 0x00002710  1 m^2
+    //   [12]   minElev          = 0x0A    10 degrees         ← UBX FIX D
+    //   [13]   drLimit          = 0x00    reserved
+    //   [14-15] pDop            = 0x00FA  25.0 (reverted v4.8.0) ← UBX FIX C
+    //   [16-17] tDop            = 0x00FA  25.0
+    //   [18-19] pAcc            = 0x0064  100 m
+    //   [20-21] tAcc            = 0x012C  300 m
+    //   [22]   staticHoldThresh = 0x28    40 cm/s            ← UBX FIX B
+    //   [23]   dgpsTimeOut      = 0x3C    60 s
+    //   [24]   cnoThreshNumSVs  = 0x00    disabled
+    //   [25]   cnoThresh        = 0x00    disabled
+    //   [26-27] reserved        = 0x00
+    //   [28-29] staticHoldMaxDist = 0x0000  disabled
+    //   [30]   utcStandard      = 0x00    automatic
+    //   [31-35] reserved        = 0x00
+    //
+    // Checksum: CK_A = 0x7D, CK_B = 0x4C
+    //   Fletcher-8 recomputed over bytes [2]..[41] with:
+    //     minElev = 0x0A, cnoThreshNumSVs = 0x00, cnoThresh = 0x00
+    // -----------------------------------------------------------------
+    delay(100);
+    static const uint8_t ubxCfgNav5[] = {
+        0xB5, 0x62,              /* UBX sync chars */
+        0x06, 0x24,              /* class CFG (0x06), id NAV5 (0x24) */
+        0x24, 0x00,              /* payload length = 36 (little-endian) */
+        0xFF, 0xFF,              /* mask: apply all fields (incl. staticHoldMask bit 6) */
+        0x04,                    /* dynModel = 4 (Automotive)       ← UBX FIX A */
+        0x03,                    /* fixMode  = 3 (Auto 2D/3D) */
+        0x00, 0x00, 0x00, 0x00,  /* fixedAlt = 0 */
+        0x10, 0x27, 0x00, 0x00,  /* fixedAltVar = 1 m^2 */
+        0x0A,                    /* minElev = 10 deg                ← UBX FIX D */
+        0x00,                    /* drLimit (reserved) */
+        0xFA, 0x00,              /* pDop = 25.0 (reverted v4.8.0) ← UBX FIX C */
+        0xFA, 0x00,              /* tDop = 25.0 */
+        0x64, 0x00,              /* pAcc = 100 m */
+        0x2C, 0x01,              /* tAcc = 300 m */
+        0x28,                    /* staticHoldThresh = 40 cm/s      ← UBX FIX B */
+        0x3C,                    /* dgpsTimeOut = 60 s */
+        0x00, 0x00,              /* cnoThreshNumSVs = 0, cnoThresh = 0 (disabled) */
+        0x00, 0x00,              /* reserved */
+        0x00, 0x00,              /* staticHoldMaxDist = disabled */
+        0x00,                    /* utcStandard = automatic */
+        0x00, 0x00, 0x00, 0x00, 0x00, /* reserved */
+        0x7D, 0x4C               /* CK_A, CK_B — Fletcher-8 over bytes [2]..[41] (v4.9.7) */
+    };
+    GNSS.write(ubxCfgNav5, sizeof(ubxCfgNav5));
+    delay(100);
+
+    lv_init();
+
+    // Allocate two DMA-capable draw buffers at runtime.
+    // MALLOC_CAP_DMA ensures the SPI hardware can access them directly,
+    // eliminating CPU stalls during 55 MHz SPI transfers to the ILI9341.
+    draw_buf1 = (lv_color_t *)heap_caps_malloc(DRAW_BUF_SIZE, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    draw_buf2 = (lv_color_t *)heap_caps_malloc(DRAW_BUF_SIZE, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!draw_buf1 || !draw_buf2) {
+        /* v4.9.8 CHANGE 5 — explicit restart on DMA alloc failure.
+           Prior code: while(1){delay(1000);} — relied on the WDT firing
+           after WDT_TIMEOUT_S seconds to reset the board.  esp_restart()
+           makes the intent immediate and unambiguous, and avoids the
+           5-second hang-then-restart cycle. */
+        esp_restart();
+    }
+
+    lv_display_t * disp = lv_tft_espi_create(SCREEN_WIDTH, SCREEN_HEIGHT, draw_buf1, DRAW_BUF_SIZE);
+    lv_display_set_buffers(disp, draw_buf1, draw_buf2, DRAW_BUF_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
+
+    // Backlight PWM — initialised HERE, after lv_tft_espi_create().
+    // TFT_eSPI::begin() (called inside lv_tft_espi_create) reconfigures
+    // GPIO TFT_BL as a plain digital output, which detaches it from the
+    // LEDC peripheral and breaks PWM control. Initialising LEDC after
+    // lv_tft_espi_create() ensures the pin stays bound to the LEDC channel
+    // and ledcWrite() changes take effect at runtime.
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ledcAttach(TFT_BL, BL_PWM_FREQ, BL_PWM_RES);   /* Core 3.x unified API */
+#else
+    ledcSetup(BL_PWM_CHANNEL, BL_PWM_FREQ, BL_PWM_RES);
+    ledcAttachPin(TFT_BL, BL_PWM_CHANNEL);          /* Core 2.x legacy API */
+#endif
+    applyBrightness();
+
+    touchscreenSPI.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+    touch.begin(touchscreenSPI);
+
+    lv_indev_t * indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, touch_read);
+    lv_indev_set_long_press_time(indev, 2000);
+
+    // Build all screens before loading any
+    buildMainUI();
+    buildMenuUI();
+    buildGpsUI();
+    buildClockUI();
+    buildThemeUI();
+    buildFontUI();
+    buildFResetUI();
+
+    // Apply restored (or default) theme and font to all screens before first render
+    applyTheme();
+    applyFont();
+
+    // Build splash last (its timer callback references scr_main)
+    buildSplashUI();
+
+    // Show splash first — auto-transitions to scr_main after SPLASH_DURATION_MS
+    lv_screen_load(scr_splash);
+
+    lv_timer_create(ui_update, 100, NULL);
+
+    // Watchdog — compatible with IDF 4.x (Core 2.x) and IDF 5.x (Core 3.x)
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms     = WDT_TIMEOUT_S * 1000,
+        .idle_core_mask = 0,
+        .trigger_panic  = true
+    };
+    esp_task_wdt_init(&wdt_config);
+#else
+    esp_task_wdt_init(WDT_TIMEOUT_S, true);
+#endif
+
+    xTaskCreatePinnedToCore(gpsTask, "GPS", 8192, NULL, 2, NULL, 0);
+
+    // Force first render after GPS task is running so the display is live
+    // as quickly as possible. dataMutex protects rally struct; ui_update
+    // timer has not yet fired at this point so no LVGL race condition.
+    lv_refr_now(NULL);
+
+    // v1.0.29-NeoGPS BUG FIX 1 — anchor lastTick to actual boot-completion
+    // time. Without this, lv_tick_inc(millis() - 0) on the first loop()
+    // call injects the full boot duration into LVGL's tick counter, firing
+    // all timers immediately on the first frame.
+    lastTick = millis();
+}
+
+// =====================
+// ====== LOOP ========
+// =====================
+void loop() {
+    /* v4.9.8 CHANGE 4 — Register loop() (Core 1) with the hardware watchdog.
+       Prior to this change esp_task_wdt_add() was called only from gpsTask()
+       (Core 0).  The WDT therefore monitored Core 0 exclusively: a deadlock
+       or infinite spin on Core 1 (e.g. a hung xSemaphoreTake in a UI callback)
+       would never trigger the watchdog because Core 0 continued resetting it
+       every 200 ms via vTaskDelay.  This change extends WDT coverage to the
+       LVGL / UI core.
+       esp_task_wdt_add(NULL) is called once at first entry; subsequent calls
+       are no-ops on IDF 4.x/5.x (the task is already subscribed).  The guard
+       ensures correctness across both IDF generations without an additional
+       static flag. */
+    static bool wdtRegistered = false;
+    if (!wdtRegistered) {
+        esp_task_wdt_add(NULL);
+        wdtRegistered = true;
+    }
+    esp_task_wdt_reset();
+
+    /* v4.3.0 CHANGE 2 — lv_tick_inc drift fix.
+       millis() is captured exactly once per iteration into 'now'.
+       lv_task_handler() is called between the capture and lv_tick_inc()
+       so that the handler's own execution time is credited to the next
+       tick's delta rather than discarded. This matches the canonical LVGL
+       usage pattern and eliminates the ~0.5 ms/s undercount that resulted
+       from calling millis() twice (once for delta, once for lastTick). */
+    uint32_t now = millis();
+    lv_task_handler();
+    lv_tick_inc(now - lastTick);
+    lastTick = now;
+    vTaskDelay(pdMS_TO_TICKS(5));
+}
